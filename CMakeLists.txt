@@ -48,7 +48,7 @@ message(STATUS "Found CURL ${CURL_VERSION_STRING}")
 find_package(SQLite3 REQUIRED)
 message(STATUS "Found SQLite3 ${SQLite3_VERSION}")
 
-# Target: jocky (placeholder executable)
+# Target: jocky
 add_executable(jocky
     src/main.cpp
 )

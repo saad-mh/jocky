@@ -84,6 +84,7 @@ $EnvFile               = Join-Path $JockyRoot ".jocky-env.ps1"
 
 New-Item -ItemType Directory -Force -Path $JockyVendorDir | Out-Null
 
+# system deps
 function Install-SystemDeps {
     Write-Log "Installing system dependencies via winget."
 
@@ -177,8 +178,17 @@ function Install-LlvmPrebuilt {
     }
 
     $llvmDirCandidate = Join-Path $installDir "lib\cmake\llvm"
-    if (-not (Test-Path $llvmDirCandidate)) {
-        Write-WarnLog "LLVM cmake config not found at $llvmDirCandidate. The official installer may not ship it -- consider -FromSource if find_package(LLVM) fails."
+    $llvmConfigCandidate = Join-Path $llvmDirCandidate "LLVMConfig.cmake"
+    $llvmHeadersCandidate = Join-Path $installDir "include\llvm"
+
+    if ((-not (Test-Path $llvmConfigCandidate)) -or (-not (Test-Path $llvmHeadersCandidate))) {
+        Write-ErrLog "The official LLVM installer at $installDir does not include a full development SDK."
+        Write-ErrLog "  Missing: $(if (-not (Test-Path $llvmConfigCandidate)) { 'LLVMConfig.cmake ' })$(if (-not (Test-Path $llvmHeadersCandidate)) { 'include\llvm\' })"
+        Write-ErrLog "  This installer ships clang.exe and the C API only -- find_package(LLVM) in CMakeLists.txt cannot work against it."
+        Write-ErrLog "  Fix: re-run with -FromSource to build a complete LLVM SDK instead:"
+        Write-ErrLog "      .\bootstrap.ps1 -FromSource -SkipSystemDeps"
+        Write-ErrLog "  (Run that from an 'x64 Native Tools Command Prompt for VS 2022' so cl.exe is on PATH.)"
+        exit 1
     }
 
     $script:LlvmDirResolved = $llvmDirCandidate
@@ -288,7 +298,7 @@ if (-not (Test-Path $cmakeListsPath)) {
     exit 0
 }
 
-Write-Log "Configuring project with CMake (build type: $CMakeBuildType)."
+Write-Log "Configuring project with CMake (build type: $CMakeBuildType).."
 $vcpkgToolchain = Join-Path $VcpkgDir "scripts\buildsystems\vcpkg.cmake"
 
 cmake -S $JockyRoot -B $JockyBuildDir `
