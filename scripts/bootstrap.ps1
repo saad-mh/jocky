@@ -63,6 +63,70 @@ function Assert-Admin {
     }
 }
 
+function Import-MsvcEnvironment {
+    # Loads the MSVC x64 developer environment into this session so cl.exe, link.exe
+    # and the Windows SDK are resolvable. Without it, CMake's Ninja generator picks
+    # whatever compiler is first on PATH -- typically C:\Program Files\LLVM\bin\clang.exe,
+    # which uses the GNU driver frontend. CMake then leaves its MSVC variable unset, and
+    # LLVM's GetHostTriple.cmake (which only handles MSVC and MinGW on Windows) yields an
+    # empty LLVM_HOST_TRIPLE, failing config-ix.cmake with "Unknown architecture host".
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        Write-Log "MSVC environment already loaded (cl.exe found on PATH)."
+        return $true
+    }
+
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) {
+        Write-WarnLog "vswhere.exe not found at $vswhere -- cannot locate the Visual Studio C++ toolchain."
+        return $false
+    }
+
+    $vsPath = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath | Select-Object -First 1
+    if (-not $vsPath) {
+        Write-WarnLog "vswhere found no Visual Studio install with the C++ x64 toolchain (VC.Tools.x86.x64)."
+        return $false
+    }
+
+    $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+    if (-not (Test-Path $vsDevCmd)) {
+        Write-WarnLog "VsDevCmd.bat not found under $vsPath."
+        return $false
+    }
+
+    Write-Log "Loading MSVC x64 developer environment from $vsPath"
+    $envDump = cmd.exe /c "`"$vsDevCmd`" -arch=amd64 -host_arch=amd64 -no_logo 2>nul && set"
+    foreach ($line in $envDump) {
+        if ($line -match '^([^=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
+        }
+    }
+
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        Write-WarnLog "Ran VsDevCmd.bat but cl.exe is still not resolvable."
+        return $false
+    }
+
+    Write-Log "MSVC environment loaded: $((Get-Command cl.exe).Source)"
+    return $true
+}
+
+function Clear-StaleCMakeCache {
+    param([string]$BuildDir)
+
+    $cacheFile = Join-Path $BuildDir "CMakeCache.txt"
+    if (-not (Test-Path $cacheFile)) { return }
+
+    $match = Select-String -Path $cacheFile -Pattern '^CMAKE_C_COMPILER:FILEPATH=(.*)$' | Select-Object -First 1
+    $cachedCompiler = if ($match) { $match.Matches.Groups[1].Value } else { "" }
+    if ($cachedCompiler -match 'cl\.exe$') { return }
+
+    Write-WarnLog "Existing CMake cache in $BuildDir was configured with '$cachedCompiler', not MSVC. Discarding it and reconfiguring."
+    Remove-Item -Recurse -Force $BuildDir
+    New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+}
+
 $LlvmMinVersion = 16
 $LlvmMajor = [int]($LlvmVersion.Split('.')[0])
 if ($LlvmMajor -lt $LlvmMinVersion) {
@@ -218,28 +282,68 @@ function Build-LlvmFromSource {
     if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
         Write-Log "Installing Ninja via winget."
         winget install --id Ninja-build.Ninja -e --source winget --accept-package-agreements --accept-source-agreements --silent
+        $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = "$machinePath;$userPath"
+    }
+    if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+        Write-ErrLog "Ninja was installed but is not resolvable on PATH in this session."
+        Write-ErrLog "Close this terminal, open a NEW 'x64 Native Tools Command Prompt for VS 2022', and re-run this script."
+        exit 1
+    }
+
+    if (-not (Import-MsvcEnvironment)) {
+        Write-ErrLog "Could not load the MSVC x64 toolchain, which LLVM needs to build on Windows."
+        Write-ErrLog "  Install it with:  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override `"--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart`""
+        Write-ErrLog "  Or open 'x64 Native Tools Command Prompt for VS 2022' and re-run this script from there."
+        exit 1
     }
 
     New-Item -ItemType Directory -Force -Path $JockyLlvmBuildDir | Out-Null
 
+    Clear-StaleCMakeCache -BuildDir $JockyLlvmBuildDir
+
     Write-Log "Configuring LLVM build (this alone can take several minutes)."
-    Write-Log "NOTE: run this from a 'x64 Native Tools Command Prompt for VS 2022' if cl.exe / Ninja can't find the MSVC toolchain."
     cmake -S (Join-Path $JockyLlvmSrcDir "llvm") -B $JockyLlvmBuildDir -G Ninja `
         -DCMAKE_BUILD_TYPE=Release `
+        -DCMAKE_C_COMPILER=cl.exe `
+        -DCMAKE_CXX_COMPILER=cl.exe `
+        -DLLVM_HOST_TRIPLE=x86_64-pc-windows-msvc `
         "-DCMAKE_INSTALL_PREFIX=$JockyLlvmInstallDir" `
         -DLLVM_ENABLE_PROJECTS="clang;lld" `
         -DLLVM_TARGETS_TO_BUILD="X86;AArch64" `
         -DLLVM_ENABLE_ASSERTIONS=OFF `
         -DLLVM_INCLUDE_TESTS=OFF `
         -DLLVM_INCLUDE_EXAMPLES=OFF `
-        -DLLVM_INCLUDE_BENCHMARKS=OFF
+        -DLLVM_INCLUDE_BENCHMARKS=OFF `
+        -DLLVM_ENABLE_DIA_SDK=OFF
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrLog "LLVM CMake configure failed (exit code $LASTEXITCODE). See errors above -- not proceeding to build."
+        exit 1
+    }
+    $ninjaBuildFile = Join-Path $JockyLlvmBuildDir "build.ninja"
+    if (-not (Test-Path $ninjaBuildFile)) {
+        Write-ErrLog "LLVM CMake configure did not produce $ninjaBuildFile -- treating this as a failure even though cmake returned exit code 0."
+        Write-ErrLog "Common cause: this shell does not have the MSVC environment loaded (cl.exe / host triple detection fails)."
+        Write-ErrLog "Fix: close this terminal, open 'x64 Native Tools Command Prompt for VS 2022' from the Start menu,"
+        Write-ErrLog "     cd back into this repo, and re-run:  .\bootstrap.ps1 -FromSource -SkipSystemDeps -Force"
+        exit 1
+    }
 
     $jobs = $env:NUMBER_OF_PROCESSORS
     Write-Log "Building LLVM with $jobs parallel jobs."
     cmake --build $JockyLlvmBuildDir -j $jobs
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrLog "LLVM build failed (exit code $LASTEXITCODE). See errors above -- not proceeding to install."
+        exit 1
+    }
 
     Write-Log "Installing LLVM into $JockyLlvmInstallDir."
     cmake --install $JockyLlvmBuildDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrLog "LLVM install step failed (exit code $LASTEXITCODE)."
+        exit 1
+    }
 
     $script:LlvmDirResolved = Join-Path $JockyLlvmInstallDir "lib\cmake\llvm"
     $script:LlvmRootResolved = $JockyLlvmInstallDir
@@ -251,6 +355,7 @@ if ($FromSource) {
 } else {
     Install-LlvmPrebuilt
 }
+
 
 Write-Log "Writing environment file to $EnvFile"
 
@@ -298,13 +403,35 @@ if (-not (Test-Path $cmakeListsPath)) {
     exit 0
 }
 
-Write-Log "Configuring project with CMake (build type: $CMakeBuildType).."
+Write-Log "Configuring project with CMake (build type: $CMakeBuildType)."
 $vcpkgToolchain = Join-Path $VcpkgDir "scripts\buildsystems\vcpkg.cmake"
+
+if (-not (Test-Path $vcpkgToolchain)) {
+    Write-ErrLog "vcpkg toolchain file not found at $vcpkgToolchain"
+    Write-ErrLog "vcpkg may not have been cloned/bootstrapped in this checkout. Re-run:"
+    Write-ErrLog "    .\bootstrap.ps1 -SkipCMake"
+    Write-ErrLog "to (re)install system deps and vcpkg without repeating the LLVM step."
+    exit 1
+}
+
+if (-not (Import-MsvcEnvironment)) {
+    Write-ErrLog "Could not load the MSVC x64 toolchain needed to configure this project."
+    Write-ErrLog "Open 'x64 Native Tools Command Prompt for VS 2022' and re-run:  .\bootstrap.ps1 -SkipSystemDeps"
+    exit 1
+}
+
+Clear-StaleCMakeCache -BuildDir $JockyBuildDir
 
 cmake -S $JockyRoot -B $JockyBuildDir `
     -DCMAKE_BUILD_TYPE=$CMakeBuildType `
+    -DCMAKE_C_COMPILER=cl.exe `
+    -DCMAKE_CXX_COMPILER=cl.exe `
     "-DLLVM_DIR=$LlvmDirResolved" `
     "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain"
+if ($LASTEXITCODE -ne 0) {
+    Write-ErrLog "CMake configure failed (exit code $LASTEXITCODE). See errors above."
+    exit 1
+}
 
 Write-Log "CMake configure complete. Build directory: $JockyBuildDir"
 Write-Log ""

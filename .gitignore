@@ -1,1 +1,3 @@
 .vendor/
+.jocky-env.ps1
+build/
