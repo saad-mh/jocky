@@ -12,6 +12,11 @@ if(MSVC)
     target_compile_options(jocky_warnings INTERFACE
         /W4          # high warning level
         /permissive- # stricter standard conformance
+        # We build with exceptions disabled to match the LLVM SDK. Some MSVC
+        # standard headers (e.g. <chrono>, pulled in transitively by LLVM) then
+        # warn C4530 "exception handler used, but unwind semantics are not
+        # enabled". The code path is never taken; silence the noise.
+        /wd4530
     )
 else()
     target_compile_options(jocky_warnings INTERFACE
