@@ -118,13 +118,40 @@ function Clear-StaleCMakeCache {
     $cacheFile = Join-Path $BuildDir "CMakeCache.txt"
     if (-not (Test-Path $cacheFile)) { return }
 
-    $match = Select-String -Path $cacheFile -Pattern '^CMAKE_C_COMPILER:FILEPATH=(.*)$' | Select-Object -First 1
-    $cachedCompiler = if ($match) { $match.Matches.Groups[1].Value } else { "" }
-    if ($cachedCompiler -match 'cl\.exe$') { return }
+    $compilerMatch = Select-String -Path $cacheFile -Pattern '^CMAKE_C_COMPILER:FILEPATH=(.*)$' | Select-Object -First 1
+    $cachedCompiler = if ($compilerMatch) { $compilerMatch.Matches.Groups[1].Value } else { "" }
 
-    Write-WarnLog "Existing CMake cache in $BuildDir was configured with '$cachedCompiler', not MSVC. Discarding it and reconfiguring."
+    # A cache built with a different generator (e.g. the Visual Studio generator)
+    # cannot be reused for a Ninja configure -- CMake errors out. Check it too.
+    $genMatch = Select-String -Path $cacheFile -Pattern '^CMAKE_GENERATOR:INTERNAL=(.*)$' | Select-Object -First 1
+    $cachedGenerator = if ($genMatch) { $genMatch.Matches.Groups[1].Value } else { "" }
+
+    if (($cachedCompiler -match 'cl\.exe$') -and ($cachedGenerator -eq 'Ninja')) { return }
+
+    Write-WarnLog "Existing CMake cache in $BuildDir does not match the expected setup (compiler='$cachedCompiler', generator='$cachedGenerator'; want MSVC cl.exe + Ninja). Discarding it and reconfiguring."
     Remove-Item -Recurse -Force $BuildDir
     New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+}
+
+function Resolve-Ninja {
+    # Make sure `ninja` is runnable in this session, and return its full path.
+    # The Ninja CMake generator needs it, but a fresh Windows box often has no
+    # ninja on PATH. A copy usually already exists under .vendor (vcpkg downloads
+    # one); fall back to that rather than forcing another install.
+    $onPath = Get-Command ninja -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+
+    $vendored = Get-ChildItem -Path $JockyVendorDir -Recurse -Filter ninja.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($vendored) {
+        $env:Path = "$(Split-Path -Parent $vendored.FullName);$env:Path"
+        Write-Log "Using vendored Ninja: $($vendored.FullName)"
+        return $vendored.FullName
+    }
+
+    Write-ErrLog "Ninja was not found on PATH or anywhere under $JockyVendorDir."
+    Write-ErrLog "Install it with:  winget install --id Ninja-build.Ninja -e"
+    exit 1
 }
 
 $LlvmMinVersion = 16
@@ -369,7 +396,9 @@ $envFileContent = @"
 `$env:LLVM_DIR       = "$LlvmDirResolved"
 `$env:LLVM_ROOT      = "$LlvmRootResolved"
 `$env:VCPKG_ROOT     = "$VcpkgDir"
-`$env:Path           = "$LlvmRootResolved\bin;" + `$env:Path
+# .vendor\llvm-build\bin holds the test tools (FileCheck, not, llvm-lit) that the
+# installed SDK's bin\ does not. Put it first so tests can find them.
+`$env:Path           = "$JockyRoot\.vendor\llvm-build\bin;$LlvmRootResolved\bin;" + `$env:Path
 "@
 Set-Content -Path $EnvFile -Value $envFileContent -Encoding utf8
 
@@ -382,7 +411,7 @@ $env:JOCKY_ROOT = $JockyRoot
 $env:LLVM_DIR = $LlvmDirResolved
 $env:LLVM_ROOT = $LlvmRootResolved
 $env:VCPKG_ROOT = $VcpkgDir
-$env:Path = "$LlvmRootResolved\bin;$env:Path"
+$env:Path = "$JockyRoot\.vendor\llvm-build\bin;$LlvmRootResolved\bin;$env:Path"
 
 Write-Log "Environment configured:"
 Write-Log "  JOCKY_ROOT = $JockyRoot"
@@ -422,12 +451,30 @@ if (-not (Import-MsvcEnvironment)) {
 
 Clear-StaleCMakeCache -BuildDir $JockyBuildDir
 
-cmake -S $JockyRoot -B $JockyBuildDir `
-    -DCMAKE_BUILD_TYPE=$CMakeBuildType `
-    -DCMAKE_C_COMPILER=cl.exe `
-    -DCMAKE_CXX_COMPILER=cl.exe `
-    "-DLLVM_DIR=$LlvmDirResolved" `
+$ninjaExe = Resolve-Ninja
+
+# The test suite (lit) runs through a real Python interpreter. Pin the one we
+# want so CMake's find_package(Python3) does not pick the Windows Store stub.
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+$pythonExe = if ($pythonCmd) { $pythonCmd.Source } else { $null }
+if (-not $pythonExe) {
+    Write-WarnLog "No 'python' on PATH; the lit test suite will not be runnable until one is installed."
+}
+
+$cmakeArgs = @(
+    "-S", $JockyRoot
+    "-B", $JockyBuildDir
+    "-G", "Ninja"
+    "-DCMAKE_MAKE_PROGRAM=$ninjaExe"
+    "-DCMAKE_BUILD_TYPE=$CMakeBuildType"
+    "-DCMAKE_C_COMPILER=cl.exe"
+    "-DCMAKE_CXX_COMPILER=cl.exe"
+    "-DLLVM_DIR=$LlvmDirResolved"
     "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain"
+)
+if ($pythonExe) { $cmakeArgs += "-DPython3_EXECUTABLE=$pythonExe" }
+
+cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) {
     Write-ErrLog "CMake configure failed (exit code $LASTEXITCODE). See errors above."
     exit 1
