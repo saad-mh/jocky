@@ -1,77 +1,68 @@
+# Top-level build file for the JOCKY compiler.
+#
+# What happens here, in order:
+#   1. Basic project settings (language, C++ standard, default build type).
+#   2. Find the LLVM development SDK and set up an interface target for it
+#      (see cmake/jocky_llvm.cmake). This also fixes the RTTI/exceptions/CRT
+#      settings so our code matches how LLVM itself was built.
+#   3. Set up the warning flags we want on our own code (cmake/jocky_warnings.cmake).
+#   4. Build the compiler in src/ and the tests in test/.
+#
+# LLVM_DIR is normally provided by scripts/bootstrap.ps1 (or bootstrap.sh),
+# which points it at the vendored SDK under .vendor/.
+
 cmake_minimum_required(VERSION 3.20)
 
 project(jocky
     VERSION 0.1.0
-    DESCRIPTION "Jocky compiler frontend / agent"
+    DESCRIPTION "JOCKY compiler"
     LANGUAGES C CXX
 )
 
-# Project-wide settings
+# --- Project-wide settings -------------------------------------------------
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # generates compile_commands.json for clangd/IDEs
+set(CMAKE_CXX_EXTENSIONS OFF)              # use -std=c++20, not -std=gnu++20
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)      # writes compile_commands.json for editors/clangd
 
+# Default to a Debug build when the generator is single-config and the user
+# did not ask for something specific.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
 endif()
 
-# LLVM_DIR is set by bootstrap.sh / bootstrap.ps1
-# find_package(LLVM) reads that to locate LLVMConfig.cmake.
-find_package(LLVM REQUIRED CONFIG)
+# JOCKY is developed and tested with the Ninja generator. Other generators may
+# work but are not exercised; warn so a surprising build failure is less puzzling.
+if(DEFINED CMAKE_GENERATOR AND NOT CMAKE_GENERATOR MATCHES "Ninja")
+    message(WARNING
+        "JOCKY is developed with the Ninja generator (cmake -G Ninja). "
+        "Generator '${CMAKE_GENERATOR}' is untested here.")
+endif()
 
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "LLVM_DIR: ${LLVM_DIR}")
-message(STATUS "LLVM include dirs: ${LLVM_INCLUDE_DIRS}")
+# --- Dependencies and toolchain setup ------------------------------------
 
-separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
-add_definitions(${LLVM_DEFINITIONS_LIST})
+# Sets up the `jocky::llvm` interface target and matching compile flags.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/jocky_llvm.cmake")
 
-# Map the specific LLVM components the frontend needs onto library names.
-# Extend this list as the compiler frontend grows (e.g. "orcjit", "mcjit").
-llvm_map_components_to_libnames(LLVM_LIBS
-    core
-    support
-    irreader
-    x86codegen
-    x86asmparser
-)
+# Sets up the `jocky_warnings` interface target (our own warning flags only).
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/jocky_warnings.cmake")
 
-# OpenSSL
-find_package(OpenSSL REQUIRED)
-message(STATUS "Found OpenSSL ${OPENSSL_VERSION}")
+# --- Build the compiler and its tests ----------------------------------
 
-# libcurl
-find_package(CURL REQUIRED)
-message(STATUS "Found CURL ${CURL_VERSION_STRING}")
+enable_testing()
 
-# SQLite3
-find_package(SQLite3 REQUIRED)
-message(STATUS "Found SQLite3 ${SQLite3_VERSION}")
+add_subdirectory(src)
+add_subdirectory(test)
 
-# Target: jocky
-add_executable(jocky
-    src/main.cpp
-)
+# --- Configure summary --------------------------------------------------
 
-target_include_directories(jocky PRIVATE
-    ${LLVM_INCLUDE_DIRS}
-)
-
-target_link_libraries(jocky PRIVATE
-    ${LLVM_LIBS}
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    CURL::libcurl
-    SQLite::SQLite3
-)
-
-# Summary
 message(STATUS "")
-message(STATUS "jocky configure summary:")
-message(STATUS "  Build type:     ${CMAKE_BUILD_TYPE}")
-message(STATUS "  C++ compiler:   ${CMAKE_CXX_COMPILER}")
-message(STATUS "  LLVM version:   ${LLVM_PACKAGE_VERSION}")
-message(STATUS "  OpenSSL:        ${OPENSSL_VERSION}")
-message(STATUS "  CURL:           ${CURL_VERSION_STRING}")
-message(STATUS "  SQLite3:        ${SQLite3_VERSION}")
+message(STATUS "JOCKY configure summary:")
+message(STATUS "  Version:       ${PROJECT_VERSION}")
+message(STATUS "  Build type:    ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Generator:     ${CMAKE_GENERATOR}")
+message(STATUS "  C++ compiler:  ${CMAKE_CXX_COMPILER}")
+message(STATUS "  LLVM version:  ${LLVM_PACKAGE_VERSION}")
+message(STATUS "  LLVM_DIR:      ${LLVM_DIR}")
 message(STATUS "")
