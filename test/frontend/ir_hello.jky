@@ -1,0 +1,12 @@
+// RUN: %jocky build --emit-llvm "%s" | %FileCheck "%s"
+
+print("hello, world");
+
+// CHECK-DAG: @[[FMT:[A-Za-z0-9_.]+]] = private unnamed_addr constant [4 x i8] c"%s\0A\00"
+// CHECK-DAG: @[[STR:[A-Za-z0-9_.]+]] = private unnamed_addr constant [13 x i8] c"hello, world\00"
+
+// CHECK-LABEL: define i64 @main()
+// CHECK:         call i32 (ptr, ...) @printf(ptr @[[FMT]], ptr @[[STR]])
+// CHECK:         ret i64 0
+
+// CHECK: declare i32 @printf(ptr, ...)

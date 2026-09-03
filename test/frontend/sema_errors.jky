@@ -1,0 +1,20 @@
+// RUN: %not %jocky build --emit-llvm "%s" 2>&1 | %FileCheck "%s"
+//
+// Codegen does the small amount of name/type checking v0 needs. Independent
+// problems are all reported in one run.
+
+func dup() { return 1; }
+func dup() { return 2; }
+
+func takesTwo(a, b) { return a + b; }
+
+var s = "not allowed here";
+print(undefinedVar);
+print(takesTwo(1));
+missing(3);
+
+// CHECK-DAG: :7:1: error: function 'dup' is defined more than once
+// CHECK-DAG: :11:9: error: a string literal can only be passed directly to print(...)
+// CHECK-DAG: :12:7: error: use of undeclared variable 'undefinedVar'
+// CHECK-DAG: :13:7: error: function 'takesTwo' expects 2 argument(s) but 1 were given
+// CHECK-DAG: :14:1: error: call to undefined function 'missing'

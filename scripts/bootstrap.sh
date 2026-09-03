@@ -239,5 +239,5 @@ cmake -S "$JOCKY_ROOT" -B "$JOCKY_BUILD_DIR" \
 log "CMake configure complete. Build directory: $JOCKY_BUILD_DIR"
 log ""
 log "Next steps:"
-log "  source \"$ENV_FILE\"
+log "  source \"$ENV_FILE\""
 log "  cmake --build \"$JOCKY_BUILD_DIR\" -j $JOBS"
