@@ -1,0 +1,7 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%s" -o "%t.exe"
+// RUN: "%t.exe" | %FileCheck "%s"
+
+print("hello, world");
+
+// CHECK: hello, world

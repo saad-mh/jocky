@@ -14,6 +14,7 @@
 #include "jocky/codegen/CodeGen.h"
 #include "jocky/codegen/ObjectEmitter.h"
 #include "jocky/codegen/PassPipeline.h"
+#include "jocky/driver/Linker.h"
 #include "jocky/lexer/Lexer.h"
 #include "jocky/lexer/Token.h"
 #include "jocky/parser/Parser.h"
@@ -22,6 +23,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
@@ -55,6 +57,26 @@ std::string deriveOutputPath(const Options &options, llvm::StringRef extension) 
     llvm::SmallString<128> path(options.inputPath);
     llvm::sys::path::replace_extension(path, extension);
     return std::string(path);
+}
+
+// Where the final executable goes. Like deriveOutputPath, but on Windows makes
+// sure the name ends in ".exe".
+std::string executableOutputPath(const Options &options) {
+#ifdef _WIN32
+    if (!options.outputPath.empty()) {
+        if (llvm::StringRef(options.outputPath).ends_with(".exe"))
+            return options.outputPath;
+        return options.outputPath + ".exe";
+    }
+    llvm::SmallString<128> path(options.inputPath);
+    llvm::sys::path::replace_extension(path, ".exe");
+    return std::string(path);
+#else
+    if (!options.outputPath.empty()) return options.outputPath;
+    llvm::SmallString<128> path(options.inputPath);
+    llvm::sys::path::replace_extension(path, "");
+    return std::string(path);
+#endif
 }
 
 // One line per token, for `jocky lex --dump-tokens`.
@@ -190,9 +212,30 @@ int runBuild(const Options &options) {
         return 0;
     }
 
-    llvm::errs() << "jocky: linking is not implemented yet; "
-                    "pass --emit-obj to stop at the object file\n";
-    return 1;
+    // --- full build: object file -> linked executable -----------------
+
+    const std::string exePath = executableOutputPath(options);
+
+    llvm::SmallString<128> objectPath(exePath);
+    llvm::sys::path::replace_extension(objectPath, ".obj");
+
+    if (!codegen::emitObjectFile(*module, *machine, objectPath, diags)) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
+
+    LinkOptions linkOptions;
+    linkOptions.verbose = options.verbose;
+    const std::string objectPathStr(objectPath.str());
+    const bool linked = link({objectPathStr}, exePath, linkOptions);
+
+    if (!options.keepTemps)
+        llvm::sys::fs::remove(objectPath);
+
+    if (!linked) return 1;
+
+    if (options.verbose) llvm::errs() << "jocky: wrote " << exePath << '\n';
+    return 0;
 }
 
 }  // namespace
