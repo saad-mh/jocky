@@ -2,19 +2,26 @@
 //
 // The driver reads the input file once and then runs whichever pipeline the
 // sub-command asks for. Stages are added here as they are implemented; right
-// now `lex` and `parse` work and `build` is still a stub.
+// now `lex`, `parse`, and `build --emit-llvm` work. Object emission and
+// linking come next.
 
 #include "jocky/driver/Driver.h"
 
 #include "jocky/Support/Diagnostic.h"
 #include "jocky/Support/StringEscape.h"
-#include "jocky/ast/ASTPrinter.h"
 #include "jocky/ast/AST.h"
+#include "jocky/ast/ASTPrinter.h"
+#include "jocky/codegen/CodeGen.h"
+#include "jocky/codegen/PassPipeline.h"
 #include "jocky/lexer/Lexer.h"
 #include "jocky/lexer/Token.h"
 #include "jocky/parser/Parser.h"
 
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <memory>
@@ -61,6 +68,30 @@ void printToken(llvm::raw_ostream &os, const Token &t) {
     os << '\n';
 }
 
+// Shared front end: read + lex + parse. Returns the parsed module, or nullptr
+// if anything was reported (diagnostics are printed here).
+std::unique_ptr<ast::Module> frontend(const Options &options,
+                                      DiagnosticEngine &diags,
+                                      std::unique_ptr<llvm::MemoryBuffer> &buffer) {
+    buffer = readInput(options.inputPath);
+    if (!buffer) return nullptr;
+
+    Lexer lexer(buffer->getBuffer(), diags);
+    const std::vector<Token> tokens = lexer.tokenize();
+    if (diags.hasErrors()) {
+        diags.printAll(llvm::errs());
+        return nullptr;
+    }
+
+    Parser parser(tokens, diags);
+    std::unique_ptr<ast::Module> module = parser.parseModule();
+    if (diags.hasErrors()) {
+        diags.printAll(llvm::errs());
+        return nullptr;
+    }
+    return module;
+}
+
 int runLex(const Options &options) {
     std::unique_ptr<llvm::MemoryBuffer> buffer = readInput(options.inputPath);
     if (!buffer) return 1;
@@ -78,29 +109,55 @@ int runLex(const Options &options) {
 }
 
 int runParse(const Options &options) {
-    std::unique_ptr<llvm::MemoryBuffer> buffer = readInput(options.inputPath);
-    if (!buffer) return 1;
-
     DiagnosticEngine diags(options.inputPath);
+    std::unique_ptr<llvm::MemoryBuffer> buffer;
+    std::unique_ptr<ast::Module> module = frontend(options, diags, buffer);
+    if (!module) return 1;
 
-    Lexer lexer(buffer->getBuffer(), diags);
-    const std::vector<Token> tokens = lexer.tokenize();
-    if (diags.hasErrors()) {
-        diags.printAll(llvm::errs());
-        return 1;
-    }
-
-    Parser parser(tokens, diags);
-    const std::unique_ptr<ast::Module> module = parser.parseModule();
-    if (diags.hasErrors()) {
-        diags.printAll(llvm::errs());
-        return 1;
-    }
-
-    if (options.dumpAst) {
-        ast::printAST(llvm::outs(), *module);
-    }
+    if (options.dumpAst) ast::printAST(llvm::outs(), *module);
     return 0;
+}
+
+int runBuild(const Options &options) {
+    DiagnosticEngine diags(options.inputPath);
+    std::unique_ptr<llvm::MemoryBuffer> buffer;
+    std::unique_ptr<ast::Module> ast = frontend(options, diags, buffer);
+    if (!ast) return 1;
+
+    llvm::LLVMContext context;
+    const llvm::StringRef moduleName =
+        llvm::sys::path::filename(options.inputPath);
+    codegen::CodeGen codegen(context, moduleName, diags);
+    std::unique_ptr<llvm::Module> module = codegen.lowerModule(*ast);
+    if (diags.hasErrors()) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
+
+    if (options.verifyModule) {
+        std::string err;
+        llvm::raw_string_ostream os(err);
+        if (llvm::verifyModule(*module, &os)) {
+            llvm::errs() << "jocky: internal error: the generated IR is invalid:\n"
+                         << os.str();
+            return 70;
+        }
+    }
+
+    const codegen::OptLevel opt =
+        options.optimize ? codegen::OptLevel::O1 : codegen::OptLevel::O0;
+
+    if (options.emitLlvm) {
+        // Print pre-transform IR unless the user also asked for optimization.
+        if (options.optimize)
+            codegen::runTransformPipeline(*module, /*machine=*/nullptr, opt);
+        module->print(llvm::outs(), nullptr);
+        return 0;
+    }
+
+    llvm::errs() << "jocky: `build` past --emit-llvm is not implemented yet "
+                    "(object emission and linking come next)\n";
+    return 1;
 }
 
 }  // namespace
@@ -109,20 +166,14 @@ int Driver::run(const Options &options) {
     switch (options.command) {
     case Command::Lex:
         return runLex(options);
-
     case Command::Parse:
         return runParse(options);
-
     case Command::Build:
-        llvm::errs() << "jocky: `build` is not implemented yet "
-                        "(the compiler pipeline is still being built up)\n";
-        return 1;
-
+        return runBuild(options);
     case Command::None:
         llvm::errs() << "jocky: no command given (try `jocky --help`)\n";
         return 2;
     }
-
     return 2;  // unreachable
 }
 
