@@ -1,0 +1,14 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%s" -o "%t.exe"
+// RUN: "%t.exe" | %FileCheck "%s"
+
+func fib(n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+print(fib(10));
+
+// CHECK: 55

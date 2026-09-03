@@ -32,6 +32,21 @@ _path_parts = [
 ]
 config.environment["PATH"] = os.pathsep.join(p for p in _path_parts if p)
 
+# lit hands test subprocesses a deliberately small environment. On Windows the
+# end-to-end tests shell out to clang, which locates the MSVC and Windows SDK
+# libraries by running vswhere and reading standard system folders - so pass
+# those variables through when they are set (LIB/INCLUDE are set inside a
+# Visual Studio developer prompt; the ProgramFiles/AppData ones let clang find
+# the toolchain on its own otherwise).
+for _var in (
+    "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData",
+    "LOCALAPPDATA", "APPDATA", "SystemDrive", "windir",
+    "LIB", "INCLUDE", "LIBPATH", "UCRTVersion", "VCINSTALLDIR",
+    "WindowsSdkDir", "WindowsSDKVersion",
+):
+    if _var in os.environ:
+        config.environment[_var] = os.environ[_var]
+
 # Tests that compile and run a real executable declare `REQUIRES: e2e`.
 if config.have_linker:
     config.available_features.add("e2e")

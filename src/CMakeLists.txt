@@ -20,6 +20,7 @@ add_library(jocky_core STATIC
     codegen/PassPipeline.cpp
     codegen/ObjectEmitter.cpp
     driver/Driver.cpp
+    driver/Linker.cpp
 )
 add_library(jocky::core ALIAS jocky_core)
 
@@ -29,6 +30,11 @@ target_link_libraries(jocky_core
     PRIVATE jocky_warnings
 )
 target_compile_features(jocky_core PUBLIC cxx_std_20)
+
+# So the link step can find a matching `clang` even when LLVM_ROOT is not set
+# in the environment. LLVM_TOOLS_BINARY_DIR comes from LLVMConfig.cmake.
+target_compile_definitions(jocky_core PRIVATE
+    JOCKY_LLVM_TOOLS_DIR="${LLVM_TOOLS_BINARY_DIR}")
 
 # --- The `jocky` command-line tool ------------------------------------
 
