@@ -5,53 +5,63 @@ and uses LLVM to turn `.jky` source files into native executables.
 
     hello.jky  ->  lexer  ->  parser  ->  AST  ->  LLVM IR  ->  object file  ->  native executable
 
-This repository is in early development. The compiler pipeline is being built up
-one stage at a time; see `docs/` (added as the stages land) and the plan notes
-for the current state.
+## Example
+
+`examples/hello.jky`:
+
+```
+print("hello, world");
+```
+
+```powershell
+.\build\bin\jocky.exe build examples\hello.jky -o hello.exe
+.\hello.exe            # prints: hello, world
+```
+
+A slightly bigger one, `examples/fib.jky`:
+
+```
+func fib(n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+print(fib(10));         // prints: 55
+```
 
 ## Building
 
-You need Windows 11 with Visual Studio 2022 Build Tools (the C++ workload),
-CMake 3.20+, Ninja, and Python 3. The `scripts/bootstrap.ps1` script provisions
-the rest, including a vendored LLVM 18 SDK under `.vendor/`.
+See [docs/building.md](docs/building.md). In short: run `scripts\bootstrap.ps1`
+once (it provisions a vendored LLVM 18 SDK under `.vendor/`), then
+`cmake --build build`.
+
+## Running a program
 
 ```powershell
-# From an elevated PowerShell prompt, the first time:
-.\scripts\bootstrap.ps1
-
-# After that, from a normal shell:
-. .\.jocky-env.ps1
-.\scripts\bootstrap.ps1 -SkipSystemDeps    # re-configure only
-cmake --build build
-```
-
-The `jocky` executable is written to `build/bin/jocky.exe`.
-
-To configure by hand instead (from a shell that already has the MSVC x64
-environment and `ninja` on `PATH`):
-
-```powershell
-cmake --preset default
-cmake --build build
-```
-
-## Running
-
-```powershell
-.\build\bin\jocky.exe --version
-.\build\bin\jocky.exe build examples\hello.jky -o hello.exe
-.\hello.exe
+.\build\bin\jocky.exe build <file>.jky -o <file>.exe   # compile and link
+.\build\bin\jocky.exe build --emit-llvm <file>.jky     # print the LLVM IR
+.\build\bin\jocky.exe lex   --dump-tokens <file>.jky   # print the token stream
+.\build\bin\jocky.exe parse --dump-ast    <file>.jky   # print the syntax tree
 ```
 
 ## Tests
 
 ```powershell
-cmake --build build --target check      # runs the lit + FileCheck test suite
+cmake --build build --target check     # LLVM lit + FileCheck suite
 ```
 
-## Language (v0)
+See [docs/testing.md](docs/testing.md).
+
+## The language (v0)
 
 64-bit integers, string literals, variables, functions, `if` / `else`, `while`,
 arithmetic and comparison operators, and a `print` builtin. Top-level statements
-run as an implicit `main`. String literals may only be passed directly to
-`print`. See `docs/03-language-v0.md` for the full grammar.
+run as an implicit `main`. Every function parameter and return value is a 64-bit
+integer. A string literal may only be passed directly to `print`.
+
+The full grammar is in [docs/grammar.md](docs/grammar.md). The compiler's
+internal structure is in [docs/architecture.md](docs/architecture.md), and the
+extension point for future code-generation passes is described in
+[docs/codegen-and-passes.md](docs/codegen-and-passes.md).
