@@ -10,6 +10,9 @@
 # same way.
 
 add_library(jocky_core STATIC
+    Support/Diagnostic.cpp
+    Support/StringEscape.cpp
+    lexer/Lexer.cpp
     driver/Driver.cpp
 )
 add_library(jocky::core ALIAS jocky_core)
