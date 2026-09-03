@@ -12,17 +12,20 @@
 #include "jocky/ast/AST.h"
 #include "jocky/ast/ASTPrinter.h"
 #include "jocky/codegen/CodeGen.h"
+#include "jocky/codegen/ObjectEmitter.h"
 #include "jocky/codegen/PassPipeline.h"
 #include "jocky/lexer/Lexer.h"
 #include "jocky/lexer/Token.h"
 #include "jocky/parser/Parser.h"
 
+#include <llvm/ADT/SmallString.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
 
 #include <memory>
 #include <string>
@@ -43,6 +46,15 @@ std::unique_ptr<llvm::MemoryBuffer> readInput(const std::string &path) {
         return nullptr;
     }
     return std::move(*bufOr);
+}
+
+// The output path for `build`: the user's -o if given, otherwise the input
+// path with its extension swapped for `extension` (e.g. ".obj").
+std::string deriveOutputPath(const Options &options, llvm::StringRef extension) {
+    if (!options.outputPath.empty()) return options.outputPath;
+    llvm::SmallString<128> path(options.inputPath);
+    llvm::sys::path::replace_extension(path, extension);
+    return std::string(path);
 }
 
 // One line per token, for `jocky lex --dump-tokens`.
@@ -155,8 +167,31 @@ int runBuild(const Options &options) {
         return 0;
     }
 
-    llvm::errs() << "jocky: `build` past --emit-llvm is not implemented yet "
-                    "(object emission and linking come next)\n";
+    // --- backend: IR -> object file -------------------------------------
+
+    codegen::initializeNativeTarget();
+    std::unique_ptr<llvm::TargetMachine> machine =
+        codegen::createHostTargetMachine(*module, opt, diags);
+    if (!machine) {
+        diags.printAll(llvm::errs());
+        return 70;
+    }
+
+    codegen::runTransformPipeline(*module, machine.get(), opt);
+
+    if (options.emitObj) {
+        const std::string objectPath = deriveOutputPath(options, ".obj");
+        if (!codegen::emitObjectFile(*module, *machine, objectPath, diags)) {
+            diags.printAll(llvm::errs());
+            return 1;
+        }
+        if (options.verbose)
+            llvm::errs() << "jocky: wrote " << objectPath << '\n';
+        return 0;
+    }
+
+    llvm::errs() << "jocky: linking is not implemented yet; "
+                    "pass --emit-obj to stop at the object file\n";
     return 1;
 }
 

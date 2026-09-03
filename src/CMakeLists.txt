@@ -18,6 +18,7 @@ add_library(jocky_core STATIC
     parser/Parser.cpp
     codegen/CodeGen.cpp
     codegen/PassPipeline.cpp
+    codegen/ObjectEmitter.cpp
     driver/Driver.cpp
 )
 add_library(jocky::core ALIAS jocky_core)
