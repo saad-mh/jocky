@@ -1,0 +1,13 @@
+// RUN: %not %jocky lex "%s" 2>&1 | %FileCheck "%s"
+//
+// The lexer keeps going after an error, so one run reports all four.
+
+var big = 99999999999999999999999;
+var s = "no closing quote
+var bad = 4 @ 2;
+var esc = "bad \q escape";
+
+// CHECK-DAG: :5:11: error: integer literal {{.*}} does not fit in a 64-bit signed integer
+// CHECK-DAG: :6:9: error: unterminated string literal
+// CHECK-DAG: :7:13: error: unexpected character '@'
+// CHECK-DAG: :8:11: error: invalid escape sequence in string literal
