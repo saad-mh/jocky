@@ -1,0 +1,12 @@
+// RUN: %jocky build --emit-llvm "%s" | %FileCheck "%s"
+
+func add(a, b) {
+    return a + b;
+}
+
+print(add(2, 40));
+
+// CHECK: define i64 @add(i64 %a, i64 %b)
+// CHECK-LABEL: define i64 @main()
+// CHECK:         %[[C:[A-Za-z0-9_.]+]] = call i64 @add(i64 2, i64 40)
+// CHECK:         call i32 (ptr, ...) @printf(ptr {{.*}}, i64 %[[C]])

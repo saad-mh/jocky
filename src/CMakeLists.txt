@@ -16,6 +16,8 @@ add_library(jocky_core STATIC
     ast/AST.cpp
     ast/ASTPrinter.cpp
     parser/Parser.cpp
+    codegen/CodeGen.cpp
+    codegen/PassPipeline.cpp
     driver/Driver.cpp
 )
 add_library(jocky::core ALIAS jocky_core)
