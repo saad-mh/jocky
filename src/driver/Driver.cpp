@@ -2,14 +2,17 @@
 //
 // The driver reads the input file once and then runs whichever pipeline the
 // sub-command asks for. Stages are added here as they are implemented; right
-// now `lex` works and `build` / `parse` are still stubs.
+// now `lex` and `parse` work and `build` is still a stub.
 
 #include "jocky/driver/Driver.h"
 
 #include "jocky/Support/Diagnostic.h"
 #include "jocky/Support/StringEscape.h"
+#include "jocky/ast/ASTPrinter.h"
+#include "jocky/ast/AST.h"
 #include "jocky/lexer/Lexer.h"
 #include "jocky/lexer/Token.h"
+#include "jocky/parser/Parser.h"
 
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
@@ -74,6 +77,32 @@ int runLex(const Options &options) {
     return diags.hasErrors() ? 1 : 0;
 }
 
+int runParse(const Options &options) {
+    std::unique_ptr<llvm::MemoryBuffer> buffer = readInput(options.inputPath);
+    if (!buffer) return 1;
+
+    DiagnosticEngine diags(options.inputPath);
+
+    Lexer lexer(buffer->getBuffer(), diags);
+    const std::vector<Token> tokens = lexer.tokenize();
+    if (diags.hasErrors()) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
+
+    Parser parser(tokens, diags);
+    const std::unique_ptr<ast::Module> module = parser.parseModule();
+    if (diags.hasErrors()) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
+
+    if (options.dumpAst) {
+        ast::printAST(llvm::outs(), *module);
+    }
+    return 0;
+}
+
 }  // namespace
 
 int Driver::run(const Options &options) {
@@ -81,9 +110,11 @@ int Driver::run(const Options &options) {
     case Command::Lex:
         return runLex(options);
 
-    case Command::Build:
     case Command::Parse:
-        llvm::errs() << "jocky: this command is not implemented yet "
+        return runParse(options);
+
+    case Command::Build:
+        llvm::errs() << "jocky: `build` is not implemented yet "
                         "(the compiler pipeline is still being built up)\n";
         return 1;
 

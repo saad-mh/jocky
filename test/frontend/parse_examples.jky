@@ -1,0 +1,8 @@
+// Smoke test: every program in examples/ must lex and parse without error.
+// (No output is checked here - a RUN line that exits non-zero fails the test.)
+
+// RUN: %jocky parse "%S/../../examples/hello.jky"
+// RUN: %jocky parse "%S/../../examples/arithmetic.jky"
+// RUN: %jocky parse "%S/../../examples/functions.jky"
+// RUN: %jocky parse "%S/../../examples/fib.jky"
+// RUN: %jocky parse "%S/../../examples/loops.jky"

@@ -1,0 +1,21 @@
+// Function declarations, parameters, calls, and return values.
+// Every parameter and every return value is a 64-bit integer.
+
+func add(a, b) {
+    return a + b;
+}
+
+func max(a, b) {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+func square(n) {
+    return n * n;
+}
+
+print(add(2, 40));
+print(max(11, 7));
+print(square(add(1, 2)));

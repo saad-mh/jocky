@@ -1,0 +1,4 @@
+// The smallest useful JOCKY program.
+// Top-level statements run as an implicit main.
+
+print("hello, world");
