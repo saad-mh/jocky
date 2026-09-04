@@ -1,6 +1,6 @@
 # lit configuration for the JOCKY test suite.
 #
-# Test files are `.jky` programs with `RUN:` / `CHECK:` lines in `//` comments,
+# Test files are `.jk` programs with `RUN:` / `CHECK:` lines in `//` comments,
 # the same style LLVM uses. Run them with:
 #   cmake --build build --target check
 
@@ -14,7 +14,7 @@ config.name = "JOCKY"
 # Windows without needing bash.
 config.test_format = lit.formats.ShTest(execute_external=False)
 
-config.suffixes = [".jky"]
+config.suffixes = [".jk"]
 
 # test_source_root / test_exec_root are set by the generated lit.site.cfg.py.
 

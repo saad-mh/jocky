@@ -24,7 +24,7 @@ is the intended place for future IR transforms.
   `internFormat` creates the `"%lld\n"` / `"%s\n"` global once per module.
   A string argument's bytes are interned as another private global.
 
-Run `jocky build --emit-llvm examples/fib.jky` to see typical output.
+Run `jocky build --emit-llvm examples/fib.jk` to see typical output.
 
 Because the loads and stores are left in place, `-O0` output is verbose but
 correct. `-O1` runs `mem2reg` (among much else) and the variables become plain

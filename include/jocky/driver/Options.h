@@ -14,7 +14,7 @@ namespace jocky::driver {
 // Which sub-command the user asked for.
 enum class Command {
     None,   // no sub-command (e.g. just `--help` or `--version`)
-    Build,  // compile a .jky file all the way to a native executable
+    Build,  // compile a .jk file all the way to a native executable
     Lex,    // debug: print the token stream
     Parse,  // debug: print the parsed syntax tree
 };
@@ -22,7 +22,7 @@ enum class Command {
 struct Options {
     Command command = Command::None;
 
-    // Input .jky file. Required for Build / Lex / Parse.
+    // Input .jk file. Required for Build / Lex / Parse.
     std::string inputPath;
 
     // Output path for `build`. Empty means "derive it from inputPath".

@@ -1,24 +1,24 @@
 # JOCKY
 
 JOCKY is a small compiled programming language. Its compiler is written in C++
-and uses LLVM to turn `.jky` source files into native executables.
+and uses LLVM to turn `.jk` source files into native executables.
 
-    hello.jky  ->  lexer  ->  parser  ->  AST  ->  LLVM IR  ->  object file  ->  native executable
+    hello.jk  ->  lexer  ->  parser  ->  AST  ->  LLVM IR  ->  object file  ->  native executable
 
 ## Example
 
-`examples/hello.jky`:
+`examples/hello.jk`:
 
 ```
 print("hello, world");
 ```
 
 ```powershell
-.\build\bin\jocky.exe build examples\hello.jky -o hello.exe
+.\build\bin\jocky.exe build examples\hello.jk -o hello.exe
 .\hello.exe            # prints: hello, world
 ```
 
-A slightly bigger one, `examples/fib.jky`:
+A slightly bigger one, `examples/fib.jk`:
 
 ```
 func fib(n) {
@@ -28,7 +28,7 @@ func fib(n) {
     return fib(n - 1) + fib(n - 2);
 }
 
-print(fib(10));         // prints: 55
+print(fib(10));         // prints: 55, hopefully
 ```
 
 ## Building
@@ -40,10 +40,10 @@ once (it provisions a vendored LLVM 18 SDK under `.vendor/`), then
 ## Running a program
 
 ```powershell
-.\build\bin\jocky.exe build <file>.jky -o <file>.exe   # compile and link
-.\build\bin\jocky.exe build --emit-llvm <file>.jky     # print the LLVM IR
-.\build\bin\jocky.exe lex   --dump-tokens <file>.jky   # print the token stream
-.\build\bin\jocky.exe parse --dump-ast    <file>.jky   # print the syntax tree
+.\build\bin\jocky.exe build <file>.jk -o <file>.exe   # compile and link
+.\build\bin\jocky.exe build --emit-llvm <file>.jk     # print the LLVM IR
+.\build\bin\jocky.exe lex   --dump-tokens <file>.jk   # print the token stream
+.\build\bin\jocky.exe parse --dump-ast    <file>.jk   # print the syntax tree
 ```
 
 ## Tests

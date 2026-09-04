@@ -2,7 +2,7 @@
 
 This document walks through what happens when you run
 
-    jocky build hello.jky -o hello.exe
+    jocky build hello.jk -o hello.exe
 
 Each stage is a separate part of the source tree so you can work on one without
 reading the others. The stages run in order; if a stage reports an error the
@@ -63,7 +63,7 @@ emits a `load`, assigning to it emits a `store`. We do not try to be clever;
 builtin: the compiler declares C's `printf`, creates a format string
 (`"%lld\n"` for integers, `"%s\n"` for strings), and emits a call.
 
-You can see the result with `jocky build --emit-llvm hello.jky`.
+You can see the result with `jocky build --emit-llvm hello.jk`.
 
 ## 5. Codegen - transform pipeline (`src/codegen/PassPipeline.cpp`)
 

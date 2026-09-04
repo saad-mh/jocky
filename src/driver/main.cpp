@@ -9,6 +9,7 @@
 #include "jocky/driver/Options.h"
 
 #include <llvm/Config/llvm-config.h>      // LLVM_VERSION_STRING
+#include <llvm/Support/Path.h>            // llvm::sys::path::extension
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>       // llvm::sys::getDefaultTargetTriple
 
@@ -29,12 +30,14 @@ const char *const kUsage =
     "jocky " JOCKY_VERSION " - the JOCKY compiler\n"
     "\n"
     "usage:\n"
-    "  jocky build <in.jky> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
-    "                       [--keep-temps] [--no-verify] [-v]\n"
-    "  jocky lex   --dump-tokens <in.jky>\n"
-    "  jocky parse --dump-ast    <in.jky>\n"
+    "  jocky build <in.jk> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
+    "                      [--keep-temps] [--no-verify] [-v]\n"
+    "  jocky lex   --dump-tokens <in.jk>\n"
+    "  jocky parse --dump-ast    <in.jk>\n"
     "  jocky --version\n"
-    "  jocky --help\n";
+    "  jocky --help\n"
+    "\n"
+    "Input files must have a '.jk' extension.\n";
 
 void printUsage(llvm::raw_ostream &os) { os << kUsage; }
 
@@ -122,6 +125,11 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
 
     if (opts.inputPath.empty()) {
         llvm::errs() << "jocky: no input file given\n";
+        return 2;
+    }
+    if (llvm::sys::path::extension(opts.inputPath) != ".jk") {
+        llvm::errs() << "jocky: input file must have a '.jk' extension (got '"
+                     << opts.inputPath << "')\n";
         return 2;
     }
     return std::nullopt;
