@@ -32,7 +32,8 @@ milestone plan.
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
     keywords   func  var  if  else  while  return  as  true  false
-    symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  == !=  < <= > >=
+    symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
+               == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
 `//` starts a comment that runs to the end of the line. Whitespace separates
 tokens and is otherwise ignored. `print` is **not** a keyword - it is an
@@ -73,13 +74,17 @@ ordinary identifier that codegen treats as a builtin.
     whileStmt    := 'while' '(' expr ')' block
     returnStmt   := 'return' expr? ';'
 
-    expr           := equality
+    expr           := bitOr
+    bitOr          := bitXor ('|' bitXor)*
+    bitXor         := bitAnd ('^' bitAnd)*
+    bitAnd         := equality ('&' equality)*
     equality       := relational (('==' | '!=') relational)*
-    relational     := additive (('<' | '<=' | '>' | '>=') additive)*
+    relational     := shift (('<' | '<=' | '>' | '>=') shift)*
+    shift          := additive (('<<' | '>>') additive)*
     additive       := multiplicative (('+' | '-') multiplicative)*
     multiplicative := cast (('*' | '/' | '%') cast)*
     cast           := unary ('as' type)*
-    unary          := '-' unary | postfix
+    unary          := ('-' | '~') unary | postfix
     postfix        := primary ('[' expr ']' | '[' expr? ':' expr? ']' | '.' IDENT)*
                                                // element index, sub-slice, `.len`
     primary        := INT
@@ -94,8 +99,11 @@ ordinary identifier that codegen treats as a builtin.
     argList        := expr (',' expr)*
 
 Binary operators are left-associative. Precedence, lowest to highest:
-`== !=`  <  `< <= > >=`  <  `+ -`  <  `* / %`  <  `as`  <  unary `-`  <
-postfix `[]` / `.`.
+`|`  <  `^`  <  `&`  <  `== !=`  <  `< <= > >=`  <  `<< >>`  <  `+ -`  <
+`* / %`  <  `as`  <  unary `- ~`  <  postfix `[]` / `.`.
+
+`<<` and `>>` are never lexed as one token - they are two adjacent `<` / `>` -
+so a nested `ptr<ptr<int>>` closes without a special rule.
 
 ## Semantics
 
@@ -123,6 +131,17 @@ like any other array.
 A bare integer literal has no fixed type: it takes whatever its context needs,
 as long as its value fits (so `var x: u8 = 200;` and `(0 as u64) - 1` are fine).
 A literal with a suffix, and every other expression, has one definite type.
+
+### Operators
+
+- Arithmetic `+ - * / %` and the bitwise `& | ^` follow the same operand rule:
+  both sides must be numbers (integers for `%` and the bitwise ops), a bare
+  literal adapts to the other side, and the result is their common type.
+- `~` needs an integer; `-` needs a number; each keeps the operand's type.
+- `<< >>` take an integer value and an integer count (of any width - the count
+  is brought to the value's type). The result is the value's type. `>>` is
+  arithmetic (sign-extending) for a signed value, logical for an unsigned one.
+- Comparisons `== != < <= > >=` produce `bool`.
 
 ### Conversions
 

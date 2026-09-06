@@ -383,6 +383,8 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
         const auto &u = static_cast<const ast::UnaryExpr &>(expr);
         llvm::Value *operand = lowerExpr(*u.operand);
         if (!operand) return nullptr;
+        if (u.op == ast::UnaryOp::BitNot)
+            return builder_.CreateNot(operand, "not");  // xor -1
         return expr.type.isFloat() ? builder_.CreateFNeg(operand, "fneg")
                                    : builder_.CreateNeg(operand, "neg");
     }
@@ -580,6 +582,24 @@ llvm::Value *CodeGen::lowerBinary(const ast::BinaryExpr &e) {
 
     // sema has coerced both sides to one type; read it off the lhs.
     const ast::Type opTy = e.lhs->type;
+
+    // Shift: the count may be a different integer type - bring it to the value's
+    // type first (LLVM needs both operands the same). `>>` picks ashr / lshr.
+    if (e.op == ast::BinaryOp::Shl || e.op == ast::BinaryOp::Shr) {
+        r = emitConvert(r, e.rhs->type, opTy);
+        if (e.op == ast::BinaryOp::Shl) return builder_.CreateShl(l, r, "shl");
+        return opTy.isSigned ? builder_.CreateAShr(l, r, "ashr")
+                             : builder_.CreateLShr(l, r, "lshr");
+    }
+
+    if (!ast::isComparison(e.op) && !opTy.isFloat()) {
+        switch (e.op) {
+        case ast::BinaryOp::BitAnd: return builder_.CreateAnd(l, r, "and");
+        case ast::BinaryOp::BitOr: return builder_.CreateOr(l, r, "or");
+        case ast::BinaryOp::BitXor: return builder_.CreateXor(l, r, "xor");
+        default: break;
+        }
+    }
 
     if (ast::isComparison(e.op)) {
         return opTy.isFloat()

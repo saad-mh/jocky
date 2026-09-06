@@ -472,6 +472,14 @@ private:
             auto &u = static_cast<ast::UnaryExpr &>(e);
             const Type ot = checkExpr(*u.operand);
             if (ot.isError()) return Type::error();
+            if (u.op == ast::UnaryOp::BitNot) {
+                if (!ot.isInteger()) {
+                    err(u.loc, llvm::Twine("unary '~' needs an integer, not ") +
+                                   ot.name());
+                    return Type::error();
+                }
+                return ot;
+            }
             if (!ot.isNumeric()) {
                 err(u.loc, llvm::Twine("unary '-' needs a number, not ") +
                                ot.name());
@@ -587,10 +595,34 @@ private:
         return Type::intTy();
     }
 
+    static bool isBitwise(ast::BinaryOp op) {
+        return op == ast::BinaryOp::BitAnd || op == ast::BinaryOp::BitOr ||
+               op == ast::BinaryOp::BitXor;
+    }
+    static bool isShift(ast::BinaryOp op) {
+        return op == ast::BinaryOp::Shl || op == ast::BinaryOp::Shr;
+    }
+
     Type checkBinary(ast::BinaryExpr &b) {
         Type lt = checkExpr(*b.lhs);
         Type rt = checkExpr(*b.rhs);
         if (lt.isError() || rt.isError()) return Type::error();
+
+        // Shift: an integer value shifted by an integer count. The count keeps
+        // its own type (codegen converts it to the value's type); result type is
+        // the value's. `>>` is arithmetic for signed, logical for unsigned.
+        if (isShift(b.op)) {
+            if (!lt.isInteger() || !rt.isInteger()) {
+                err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                               "' needs integer operands, not " + lt.name() +
+                               " and " + rt.name());
+                return Type::error();
+            }
+            adaptIntLiteral(*b.rhs, lt);  // tidies a bare count literal
+            return lt;
+        }
+
+        const bool wantInteger = isBitwise(b.op) || b.op == ast::BinaryOp::Mod;
 
         if (!lt.isNumeric() || !rt.isNumeric()) {
             err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
@@ -621,8 +653,9 @@ private:
             return Type::error();
         }
 
-        if (b.op == ast::BinaryOp::Mod && !common.isInteger()) {
-            err(b.loc, "'%' needs integer operands");
+        if (wantInteger && !common.isInteger()) {
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' needs integer operands");
             return Type::error();
         }
 

@@ -55,11 +55,15 @@ enum class TokenKind {
     Star,     // *
     Slash,    // /
     Percent,  // %
+    Amp,      // &   (bitwise and; also prefix address-of)
+    Pipe,     // |
+    Caret,    // ^
+    Tilde,    // ~
     EqEq,     // ==
     NotEq,    // !=
-    Lt,       // <
+    Lt,       // <   (a shift `<<` is two adjacent Lt; see the parser)
     LtEq,     // <=
-    Gt,       // >
+    Gt,       // >   (a shift `>>` is two adjacent Gt)
     GtEq,     // >=
 
     Eof,    // end of input; always the last token

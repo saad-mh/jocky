@@ -60,6 +60,10 @@ llvm::StringRef tokenKindName(TokenKind kind) {
     case TokenKind::Star: return "Star";
     case TokenKind::Slash: return "Slash";
     case TokenKind::Percent: return "Percent";
+    case TokenKind::Amp: return "Amp";
+    case TokenKind::Pipe: return "Pipe";
+    case TokenKind::Caret: return "Caret";
+    case TokenKind::Tilde: return "Tilde";
     case TokenKind::EqEq: return "EqEq";
     case TokenKind::NotEq: return "NotEq";
     case TokenKind::Lt: return "Lt";
@@ -172,6 +176,10 @@ Token Lexer::nextToken() {
     case '*': return finish(TokenKind::Star, start, loc);
     case '/': return finish(TokenKind::Slash, start, loc);
     case '%': return finish(TokenKind::Percent, start, loc);
+    case '&': return finish(TokenKind::Amp, start, loc);
+    case '|': return finish(TokenKind::Pipe, start, loc);
+    case '^': return finish(TokenKind::Caret, start, loc);
+    case '~': return finish(TokenKind::Tilde, start, loc);
     case '=':
         if (peek() == '=') {
             advance();

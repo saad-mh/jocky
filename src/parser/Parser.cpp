@@ -330,9 +330,49 @@ ast::Stmt *Parser::parseReturn() {
     return make<ast::ReturnStmt>(loc, value);
 }
 
-// expressions (precedence climbing, l to h)
+// expressions (precedence climbing, l to h). Lowest to highest:
+//   |  ^  &  ==/!=  </<=/>/>=  <</>>  +/-  *//%  as  unary -/~  postfix []/.
 
-ast::Expr *Parser::parseExpr() { return parseEquality(); }
+ast::Expr *Parser::parseExpr() { return parseBitOr(); }
+
+ast::Expr *Parser::parseBitOr() {
+    ast::Expr *left = parseBitXor();
+    if (!left) return nullptr;
+    while (check(TokenKind::Pipe)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseBitXor();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitOr, left, right);
+    }
+    return left;
+}
+
+ast::Expr *Parser::parseBitXor() {
+    ast::Expr *left = parseBitAnd();
+    if (!left) return nullptr;
+    while (check(TokenKind::Caret)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseBitAnd();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitXor, left, right);
+    }
+    return left;
+}
+
+ast::Expr *Parser::parseBitAnd() {
+    ast::Expr *left = parseEquality();
+    if (!left) return nullptr;
+    while (check(TokenKind::Amp)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseEquality();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitAnd, left, right);
+    }
+    return left;
+}
 
 ast::Expr *Parser::parseEquality() {
     ast::Expr *left = parseRelational();
@@ -355,15 +395,17 @@ ast::Expr *Parser::parseEquality() {
 }
 
 ast::Expr *Parser::parseRelational() {
-    ast::Expr *left = parseAdditive();
+    ast::Expr *left = parseShift();
     if (!left) return nullptr;
     for (;;) {
+        // `<` / `>` here is relational only when it is *not* the first half of a
+        // `<<` / `>>` shift (two adjacent tokens).
         ast::BinaryOp op;
-        if (check(TokenKind::Lt)) {
+        if (check(TokenKind::Lt) && !twoAdjacent(TokenKind::Lt)) {
             op = ast::BinaryOp::Lt;
         } else if (check(TokenKind::LtEq)) {
             op = ast::BinaryOp::Le;
-        } else if (check(TokenKind::Gt)) {
+        } else if (check(TokenKind::Gt) && !twoAdjacent(TokenKind::Gt)) {
             op = ast::BinaryOp::Gt;
         } else if (check(TokenKind::GtEq)) {
             op = ast::BinaryOp::Ge;
@@ -372,6 +414,36 @@ ast::Expr *Parser::parseRelational() {
         }
         const SourceLocation loc = current().location;
         advance();
+        ast::Expr *right = parseShift();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, op, left, right);
+    }
+}
+
+// `<<` and `>>` are two adjacent `<` / `>` tokens (JOCKY never lexes them as
+// one, so `ptr<ptr<int>>` closes cleanly). "Adjacent" means no space between.
+bool Parser::twoAdjacent(TokenKind kind) const {
+    if (current().kind != kind || peek(1).kind != kind) return false;
+    const SourceLocation a = current().location;
+    const SourceLocation b = peek(1).location;
+    return a.line == b.line && a.column + 1 == b.column;
+}
+
+ast::Expr *Parser::parseShift() {
+    ast::Expr *left = parseAdditive();
+    if (!left) return nullptr;
+    for (;;) {
+        ast::BinaryOp op;
+        if (twoAdjacent(TokenKind::Lt)) {
+            op = ast::BinaryOp::Shl;
+        } else if (twoAdjacent(TokenKind::Gt)) {
+            op = ast::BinaryOp::Shr;
+        } else {
+            return left;
+        }
+        const SourceLocation loc = current().location;
+        advance();  // first < / >
+        advance();  // second < / >
         ast::Expr *right = parseAdditive();
         if (!right) return nullptr;
         left = make<ast::BinaryExpr>(loc, op, left, right);
@@ -437,12 +509,14 @@ ast::Expr *Parser::parseCast() {
 }
 
 ast::Expr *Parser::parseUnary() {
-    if (check(TokenKind::Minus)) {
+    if (check(TokenKind::Minus) || check(TokenKind::Tilde)) {
+        const ast::UnaryOp op = check(TokenKind::Tilde) ? ast::UnaryOp::BitNot
+                                                        : ast::UnaryOp::Neg;
         const SourceLocation loc = current().location;
         advance();
         ast::Expr *operand = parseUnary();
         if (!operand) return nullptr;
-        return make<ast::UnaryExpr>(loc, ast::UnaryOp::Neg, operand);
+        return make<ast::UnaryExpr>(loc, op, operand);
     }
     return parsePostfix();
 }

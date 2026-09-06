@@ -53,12 +53,15 @@ enum class NodeKind {
 };
 
 enum class UnaryOp {
-    Neg,  // -x
+    Neg,     // -x
+    BitNot,  // ~x
 };
 
 enum class BinaryOp {
-    Add, Sub, Mul, Div, Mod,   // + - * / %
-    Eq, Ne, Lt, Le, Gt, Ge,    // == != < <= > >=
+    Add, Sub, Mul, Div, Mod,        // + - * / %
+    BitAnd, BitOr, BitXor,          // & | ^
+    Shl, Shr,                       // << >>
+    Eq, Ne, Lt, Le, Gt, Ge,        // == != < <= > >=
 };
 
 // Human-readable names, for the AST dump and tests.
