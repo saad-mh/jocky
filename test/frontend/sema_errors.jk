@@ -10,13 +10,13 @@ func dup() { return 2; }
 
 func takesTwo(a: int, b: int) -> int { return a + b; }
 
-var s = "not allowed here";
 print(undefinedVar);
 print(takesTwo(1));
 missing(3);
+undeclared = 5;
 
 // CHECK-DAG: :9:1: error: function 'dup' is defined more than once
-// CHECK-DAG: :13:9: error: a string literal can only be passed directly to print(...)
-// CHECK-DAG: :14:7: error: use of undeclared variable 'undefinedVar'
-// CHECK-DAG: :15:7: error: function 'takesTwo' expects 2 argument(s) but 1 were given
-// CHECK-DAG: :16:1: error: call to undefined function 'missing'
+// CHECK-DAG: :13:7: error: use of undeclared variable 'undefinedVar'
+// CHECK-DAG: :14:7: error: function 'takesTwo' expects 2 argument(s) but 1 were given
+// CHECK-DAG: :15:1: error: call to undefined function 'missing'
+// CHECK-DAG: :16:1: error: use of undeclared variable 'undeclared'

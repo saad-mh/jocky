@@ -78,10 +78,22 @@ llvm::Type *CodeGen::llvmType(ast::Type t) {
     case ast::TypeKind::Float:
         return t.bits == 32 ? llvm::Type::getFloatTy(ctx_)
                             : llvm::Type::getDoubleTy(ctx_);
+    case ast::TypeKind::Array:
+        return llvm::ArrayType::get(llvmType(t.elem()), t.length);
+    case ast::TypeKind::Slice:
+        return sliceTy();
     case ast::TypeKind::Error:
         return i64Ty();  // unreachable post-sema; keeps codegen total
     }
     return i64Ty();
+}
+
+// Every slice, whatever its element type, is a { ptr, i64 } pair: the base
+// address and the element count. The element type is only tracked in ast::Type.
+llvm::StructType *CodeGen::sliceTy() {
+    if (!sliceTy_)
+        sliceTy_ = llvm::StructType::create({ptrTy(), i64Ty()}, "jocky.slice");
+    return sliceTy_;
 }
 
 llvm::Value *CodeGen::zeroValue(ast::Type t) {
@@ -219,8 +231,6 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
     switch (stmt.kind) {
     case ast::NodeKind::VarDeclStmt: {
         const auto &v = static_cast<const ast::VarDeclStmt &>(stmt);
-        llvm::Value *init = lowerExpr(*v.init);
-        if (!init) return;
         Local *local = lookupLocal(v.name);
         if (!local) {
             llvm::AllocaInst *slot =
@@ -229,6 +239,9 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
             locals_[v.name] = Local{slot, v.declaredType};
             local = lookupLocal(v.name);
         }
+        if (!v.init) return;  // `var buf: char[N];` - storage left unset
+        llvm::Value *init = lowerExpr(*v.init);
+        if (!init) return;
         builder_.CreateStore(init, local->slot);
         return;
     }
@@ -236,13 +249,9 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
         const auto &a = static_cast<const ast::AssignStmt &>(stmt);
         llvm::Value *value = lowerExpr(*a.value);
         if (!value) return;
-        Local *local = lookupLocal(a.name);
-        if (!local) {
-            error(a.loc,
-                  "internal: assignment to a variable sema did not resolve");
-            return;
-        }
-        builder_.CreateStore(value, local->slot);
+        llvm::Value *addr = lowerAddr(*a.target);
+        if (!addr) return;
+        builder_.CreateStore(value, addr);
         return;
     }
     case ast::NodeKind::ExprStmt:
@@ -351,11 +360,13 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
             llvmType(expr.type),
             static_cast<const ast::BoolLiteralExpr &>(expr).value ? 1 : 0);
 
-    case ast::NodeKind::StringLiteralExpr:
-        // sema only lets a string literal through as a direct print(...) arg,
-        // which lowerPrint handles without calling lowerExpr.
-        error(expr.loc, "internal: bare string literal reached codegen");
-        return nullptr;
+    case ast::NodeKind::StringLiteralExpr: {
+        // A string literal is a `char[len + 1]`. As a value, load it from its
+        // interned global (usually it decays to a slice first, see below).
+        const auto &s = static_cast<const ast::StringLiteralExpr &>(expr);
+        return builder_.CreateLoad(llvmType(expr.type), internCString(s.value),
+                                   "str");
+    }
 
     case ast::NodeKind::VarRefExpr: {
         const auto &v = static_cast<const ast::VarRefExpr &>(expr);
@@ -386,10 +397,135 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
     case ast::NodeKind::ImplicitConversionExpr:
         return lowerConversion(expr);
 
+    case ast::NodeKind::ArrayLiteralExpr:
+        return lowerArrayLiteral(static_cast<const ast::ArrayLiteralExpr &>(expr));
+    case ast::NodeKind::IndexExpr:
+        return lowerIndex(static_cast<const ast::IndexExpr &>(expr));
+    case ast::NodeKind::SliceExpr:
+        return lowerSliceExpr(static_cast<const ast::SliceExpr &>(expr));
+    case ast::NodeKind::MemberExpr:
+        return lowerMember(static_cast<const ast::MemberExpr &>(expr));
+    case ast::NodeKind::ArrayToSliceExpr:
+        return lowerArrayToSlice(
+            static_cast<const ast::ArrayToSliceExpr &>(expr));
+
     default:
         error(expr.loc, "internal: unexpected expression kind in codegen");
         return nullptr;
     }
+}
+
+// The address of an lvalue: a variable's slot, or a computed element address.
+llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
+    if (e.kind == ast::NodeKind::VarRefExpr) {
+        Local *local = lookupLocal(static_cast<const ast::VarRefExpr &>(e).name);
+        if (!local) {
+            error(e.loc, "internal: lvalue names a variable sema did not "
+                         "resolve");
+            return nullptr;
+        }
+        return local->slot;
+    }
+    if (e.kind == ast::NodeKind::IndexExpr) {
+        const auto &ix = static_cast<const ast::IndexExpr &>(e);
+        SeqRef seq = sequenceOf(*ix.base);
+        if (!seq.basePtr) return nullptr;
+        llvm::Value *idx = lowerExpr(*ix.index);
+        if (!idx) return nullptr;
+        return builder_.CreateGEP(llvmType(seq.elem), seq.basePtr, idx,
+                                  "elt.addr");
+    }
+    error(e.loc, "internal: expression is not an lvalue in codegen");
+    return nullptr;
+}
+
+// The base pointer + length of an array or slice expression, for indexing and
+// slicing. Arrays are addressed in place; slices are unpacked.
+CodeGen::SeqRef CodeGen::sequenceOf(const ast::Expr &e) {
+    SeqRef r;
+    if (e.type.isArray()) {
+        r.elem = e.type.elem();
+        r.len = i64(static_cast<std::int64_t>(e.type.length));
+        if (e.kind == ast::NodeKind::StringLiteralExpr) {
+            r.basePtr = internCString(
+                static_cast<const ast::StringLiteralExpr &>(e).value);
+        } else {
+            llvm::Value *arrPtr = lowerAddr(e);
+            if (!arrPtr) return {};
+            r.basePtr = builder_.CreateGEP(
+                llvmType(e.type), arrPtr,
+                {i64(0), i64(0)}, "arr.base");
+        }
+        return r;
+    }
+    if (e.type.isSlice()) {
+        r.elem = e.type.elem();
+        llvm::Value *s = lowerExpr(e);
+        if (!s) return {};
+        r.basePtr = builder_.CreateExtractValue(s, 0, "slc.ptr");
+        r.len = builder_.CreateExtractValue(s, 1, "slc.len");
+        return r;
+    }
+    error(e.loc, "internal: sequenceOf on a non-array/slice type");
+    return {};
+}
+
+llvm::Value *CodeGen::makeSlice(llvm::Value *basePtr, llvm::Value *len) {
+    llvm::Value *s = llvm::UndefValue::get(sliceTy());
+    s = builder_.CreateInsertValue(s, basePtr, 0, "slc.set.ptr");
+    s = builder_.CreateInsertValue(s, len, 1, "slc.set.len");
+    return s;
+}
+
+llvm::Value *CodeGen::lowerIndex(const ast::IndexExpr &e) {
+    llvm::Value *addr = lowerAddr(e);
+    if (!addr) return nullptr;
+    return builder_.CreateLoad(llvmType(e.type), addr, "elt");
+}
+
+llvm::Value *CodeGen::lowerMember(const ast::MemberExpr &e) {
+    // Only `.len` exists.
+    if (e.base->type.isArray())
+        return i64(static_cast<std::int64_t>(e.base->type.length));
+    llvm::Value *s = lowerExpr(*e.base);
+    if (!s) return nullptr;
+    return builder_.CreateExtractValue(s, 1, "len");
+}
+
+llvm::Value *CodeGen::lowerSliceExpr(const ast::SliceExpr &e) {
+    SeqRef seq = sequenceOf(*e.base);
+    if (!seq.basePtr) return nullptr;
+
+    llvm::Value *lo = e.lo ? lowerExpr(*e.lo) : i64(0);
+    if (!lo) return nullptr;
+    llvm::Value *hi = e.hi ? lowerExpr(*e.hi) : seq.len;
+    if (!hi) return nullptr;
+
+    llvm::Value *base =
+        builder_.CreateGEP(llvmType(seq.elem), seq.basePtr, lo, "sub.base");
+    llvm::Value *len = builder_.CreateSub(hi, lo, "sub.len");
+    return makeSlice(base, len);
+}
+
+llvm::Value *CodeGen::lowerArrayToSlice(const ast::ArrayToSliceExpr &e) {
+    SeqRef seq = sequenceOf(*e.array);
+    if (!seq.basePtr) return nullptr;
+    return makeSlice(seq.basePtr, seq.len);
+}
+
+llvm::Value *CodeGen::lowerArrayLiteral(const ast::ArrayLiteralExpr &e) {
+    llvm::Type *arrTy = llvmType(e.type);
+    llvm::Value *tmp = createEntryAlloca(
+        builder_.GetInsertBlock()->getParent(), "arr.lit", arrTy);
+    for (std::size_t i = 0; i < e.elements.size(); ++i) {
+        llvm::Value *el = lowerExpr(*e.elements[i]);
+        if (!el) return nullptr;
+        llvm::Value *slot = builder_.CreateGEP(
+            arrTy, tmp,
+            {i64(0), i64(static_cast<std::int64_t>(i))}, "arr.lit.elt");
+        builder_.CreateStore(el, slot);
+    }
+    return builder_.CreateLoad(arrTy, tmp, "arr.lit.val");
 }
 
 llvm::Value *CodeGen::lowerConversion(const ast::Expr &expr) {
@@ -516,15 +652,35 @@ llvm::Value *CodeGen::lowerPrint(const ast::Expr &arg) {
         builder_.CreateCall(printf->getFunctionType(), printf, a);
     };
 
+    const ast::Type t = arg.type;
+
     if (arg.kind == ast::NodeKind::StringLiteralExpr) {
         const auto &s = static_cast<const ast::StringLiteralExpr &>(arg);
         call(internFormat("%s\n", "jocky.fmt.str"), internCString(s.value));
         return i64(0);
     }
 
+    // A `char[N]` is treated as a C string (NUL-terminated). A `char[]` slice
+    // may be a sub-view with no terminator, so print exactly `len` bytes.
+    if (t.isArray()) {
+        SeqRef seq = sequenceOf(arg);
+        if (!seq.basePtr) return nullptr;
+        call(internFormat("%s\n", "jocky.fmt.str"), seq.basePtr);
+        return i64(0);
+    }
+    if (t.isSlice()) {
+        SeqRef seq = sequenceOf(arg);
+        if (!seq.basePtr) return nullptr;
+        llvm::Value *n =
+            builder_.CreateTrunc(seq.len, llvm::Type::getInt32Ty(ctx_), "slen");
+        llvm::Value *a[] = {internFormat("%.*s\n", "jocky.fmt.pstr"), n,
+                            seq.basePtr};
+        builder_.CreateCall(printf->getFunctionType(), printf, a);
+        return i64(0);
+    }
+
     llvm::Value *v = lowerExpr(arg);
     if (!v) return nullptr;
-    const ast::Type t = arg.type;
 
     if (t.isBool()) {
         llvm::Value *sel = builder_.CreateSelect(v, internCString("true"),

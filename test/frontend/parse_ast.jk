@@ -32,7 +32,8 @@ print(f(3, 4));
 // CHECK-NEXT:           (intlit 10)
 // CHECK-NEXT:         )
 // CHECK-NEXT:         (block
-// CHECK-NEXT:           (assign x
+// CHECK-NEXT:           (assign
+// CHECK-NEXT:             (varref x)
 // CHECK-NEXT:             (unary Neg
 // CHECK-NEXT:               (varref x)
 // CHECK-NEXT:             )
@@ -45,7 +46,8 @@ print(f(3, 4));
 // CHECK-NEXT:               (intlit 0)
 // CHECK-NEXT:             )
 // CHECK-NEXT:             (block
-// CHECK-NEXT:               (assign x
+// CHECK-NEXT:               (assign
+// CHECK-NEXT:                 (varref x)
 // CHECK-NEXT:                 (binary Sub
 // CHECK-NEXT:                   (varref x)
 // CHECK-NEXT:                   (intlit 1)

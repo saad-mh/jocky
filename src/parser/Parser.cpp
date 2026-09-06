@@ -149,8 +149,9 @@ ast::FunctionDecl *Parser::parseFunctionDecl() {
     return fn;
 }
 
-// A type in annotation position. Only a bare name for now (`int`, `u32`, `bool`,
-// ...); array / pointer forms come in later milestones. Sema resolves the name.
+// A type in annotation position: a name (`int`, `u32`), optionally followed by
+// `[N]` (fixed array) and/or `[]` (slice), applied left to right. Sema resolves
+// the name and folds the size expression.
 ast::TypeExpr *Parser::parseType() {
     if (!check(TokenKind::Identifier)) {
         diags_.error(current().location,
@@ -159,9 +160,24 @@ ast::TypeExpr *Parser::parseType() {
         return nullptr;
     }
     const SourceLocation loc = current().location;
-    std::string name = current().spelling.str();
+    ast::TypeExpr *ty = make<ast::TypeExpr>(loc, current().spelling.str());
     advance();
-    return make<ast::TypeExpr>(loc, std::move(name));
+
+    while (check(TokenKind::LBracket)) {
+        const SourceLocation bloc = current().location;
+        advance();  // '['
+        if (match(TokenKind::RBracket)) {
+            ty = make<ast::TypeExpr>(bloc, ast::TypeExpr::Form::Slice, ty,
+                                     nullptr);
+            continue;
+        }
+        ast::Expr *size = parseExpr();
+        if (!size) return nullptr;
+        if (!expect(TokenKind::RBracket, "']' after the array length"))
+            return nullptr;
+        ty = make<ast::TypeExpr>(bloc, ast::TypeExpr::Form::Array, ty, size);
+    }
+    return ty;
 }
 
 ast::Block *Parser::parseBlock() {
@@ -208,10 +224,24 @@ ast::Stmt *Parser::parseVarDecl() {
         if (!annotation) return nullptr;
     }
 
-    if (!expect(TokenKind::Assign, "'=' in a variable declaration")) return nullptr;
+    // The initializer is optional only when a type was given
+    // (`var buf: char[4096];`); otherwise there is nothing to infer from.
+    ast::Expr *init = nullptr;
+    if (match(TokenKind::Assign)) {
+        init = parseExpr();
+        if (!init) return nullptr;
+    } else if (!annotation) {
+        diags_.error(current().location,
+                     "a variable needs a type or an initializer");
+        return nullptr;
+    } else if (!check(TokenKind::Semicolon)) {
+        diags_.error(current().location,
+                     llvm::Twine("expected '=' or ';' after the variable "
+                                 "declaration but found ") +
+                         describeToken(current()));
+        return nullptr;
+    }
 
-    ast::Expr *init = parseExpr();
-    if (!init) return nullptr;
     if (!expect(TokenKind::Semicolon, "';' after the variable declaration"))
         return nullptr;
 
@@ -221,24 +251,21 @@ ast::Stmt *Parser::parseVarDecl() {
 }
 
 ast::Stmt *Parser::parseAssignOrExprStatement() {
-    // Assignment: IDENT '=' expr ';'  - only when '=' directly follows the name.
-    if (check(TokenKind::Identifier) && peek(1).kind == TokenKind::Assign) {
-        const SourceLocation loc = current().location;
-        std::string name = current().spelling.str();
-        advance();  // IDENT
-        advance();  // '='
+    const SourceLocation loc = current().location;
+    ast::Expr *e = parseExpr();
+    if (!e) return nullptr;
 
+    // `lvalue = expr ;` - a bare '=' after a full expression is an assignment.
+    // Whether the left side is actually assignable is a semantic question.
+    if (match(TokenKind::Assign)) {
         ast::Expr *value = parseExpr();
         if (!value) return nullptr;
         if (!expect(TokenKind::Semicolon, "';' after the assignment"))
             return nullptr;
-        return make<ast::AssignStmt>(loc, std::move(name), value);
+        return make<ast::AssignStmt>(loc, e, value);
     }
 
     // Otherwise: expr ';'  (covers `print(x);` and other bare calls).
-    const SourceLocation loc = current().location;
-    ast::Expr *e = parseExpr();
-    if (!e) return nullptr;
     if (!expect(TokenKind::Semicolon, "';' after the expression")) return nullptr;
     return make<ast::ExprStmt>(loc, e);
 }
@@ -417,7 +444,67 @@ ast::Expr *Parser::parseUnary() {
         if (!operand) return nullptr;
         return make<ast::UnaryExpr>(loc, ast::UnaryOp::Neg, operand);
     }
-    return parsePrimary();
+    return parsePostfix();
+}
+
+// `primary` followed by any run of `[index]`, `[lo:hi]`, and `.member`.
+ast::Expr *Parser::parsePostfix() {
+    ast::Expr *e = parsePrimary();
+    if (!e) return nullptr;
+
+    for (;;) {
+        if (check(TokenKind::LBracket)) {
+            const SourceLocation loc = current().location;
+            advance();  // '['
+
+            ast::Expr *lo = nullptr;
+            ast::Expr *hi = nullptr;
+
+            if (check(TokenKind::Colon)) {
+                advance();  // ':'
+                if (!check(TokenKind::RBracket)) {
+                    hi = parseExpr();
+                    if (!hi) return nullptr;
+                }
+            } else {
+                ast::Expr *first = parseExpr();
+                if (!first) return nullptr;
+                if (match(TokenKind::Colon)) {
+                    lo = first;
+                    if (!check(TokenKind::RBracket)) {
+                        hi = parseExpr();
+                        if (!hi) return nullptr;
+                    }
+                } else {
+                    if (!expect(TokenKind::RBracket, "']' after the index"))
+                        return nullptr;
+                    e = make<ast::IndexExpr>(loc, e, first);
+                    continue;
+                }
+            }
+
+            if (!expect(TokenKind::RBracket, "']' after the slice bounds"))
+                return nullptr;
+            e = make<ast::SliceExpr>(loc, e, lo, hi);
+            continue;
+        }
+
+        if (check(TokenKind::Dot)) {
+            const SourceLocation loc = current().location;
+            advance();  // '.'
+            if (!check(TokenKind::Identifier)) {
+                diags_.error(current().location,
+                             "expected a member name after '.'");
+                return nullptr;
+            }
+            std::string member = current().spelling.str();
+            advance();
+            e = make<ast::MemberExpr>(loc, e, std::move(member));
+            continue;
+        }
+
+        return e;
+    }
 }
 
 ast::Expr *Parser::parsePrimary() {
@@ -453,6 +540,23 @@ ast::Expr *Parser::parsePrimary() {
     case TokenKind::StringLiteral:
         advance();
         return make<ast::StringLiteralExpr>(tok.location, tok.stringValue);
+
+    case TokenKind::LBracket: {
+        const SourceLocation loc = tok.location;
+        advance();  // '['
+        auto *lit = make<ast::ArrayLiteralExpr>(loc);
+        if (!check(TokenKind::RBracket)) {
+            for (;;) {
+                ast::Expr *el = parseExpr();
+                if (!el) return nullptr;
+                lit->elements.push_back(el);
+                if (!match(TokenKind::Comma)) break;
+            }
+        }
+        if (!expect(TokenKind::RBracket, "']' to close the array literal"))
+            return nullptr;
+        return lit;
+    }
 
     case TokenKind::Identifier: {
         std::string name = tok.spelling.str();

@@ -47,6 +47,9 @@ llvm::StringRef tokenKindName(TokenKind kind) {
     case TokenKind::RParen: return "RParen";
     case TokenKind::LBrace: return "LBrace";
     case TokenKind::RBrace: return "RBrace";
+    case TokenKind::LBracket: return "LBracket";
+    case TokenKind::RBracket: return "RBracket";
+    case TokenKind::Dot: return "Dot";
     case TokenKind::Comma: return "Comma";
     case TokenKind::Colon: return "Colon";
     case TokenKind::Arrow: return "Arrow";
@@ -153,6 +156,9 @@ Token Lexer::nextToken() {
     case ')': return finish(TokenKind::RParen, start, loc);
     case '{': return finish(TokenKind::LBrace, start, loc);
     case '}': return finish(TokenKind::RBrace, start, loc);
+    case '[': return finish(TokenKind::LBracket, start, loc);
+    case ']': return finish(TokenKind::RBracket, start, loc);
+    case '.': return finish(TokenKind::Dot, start, loc);
     case ',': return finish(TokenKind::Comma, start, loc);
     case ':': return finish(TokenKind::Colon, start, loc);
     case ';': return finish(TokenKind::Semicolon, start, loc);
