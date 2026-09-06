@@ -8,7 +8,7 @@
 // RUN: %jocky build --emit-llvm --obfuscate=flatten --obf-seed 9 "%s" > "%t.2.ll"
 // RUN: diff "%t.1.ll" "%t.2.ll"
 
-func fib(n) {
+func fib(n: int) -> int {
     if (n < 2) {
         return n;
     }

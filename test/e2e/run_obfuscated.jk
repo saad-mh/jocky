@@ -5,14 +5,14 @@
 // RUN: %jocky build --obfuscate --obf-seed 123 "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-func fib(n) {
+func fib(n: int) -> int {
     if (n < 2) {
         return n;
     }
     return fib(n - 1) + fib(n - 2);
 }
 
-func mul3(x) {
+func mul3(x: int) -> int {
     return x * 3;
 }
 

@@ -1,18 +1,18 @@
 // Function declarations, parameters, calls, and return values.
-// Every parameter and every return value is a 64-bit integer.
+// Parameters take a type annotation; the return type defaults to `int`.
 
-func add(a, b) {
+func add(a: int, b: int) -> int {
     return a + b;
 }
 
-func max(a, b) {
+func max(a: int, b: int) -> int {
     if (a > b) {
         return a;
     }
     return b;
 }
 
-func square(n) {
+func square(n: int) -> int {
     return n * n;
 }
 

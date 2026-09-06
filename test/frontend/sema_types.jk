@@ -1,0 +1,41 @@
+// RUN: %not %jocky check "%s" 2>&1 | %FileCheck "%s"
+//
+// The L0 type-system diagnostics: missing parameter annotations, an
+// uninferable local, a wrong return type, disallowed implicit conversions
+// (narrowing, signed/unsigned, ->bool, double->float), and a non-numeric
+// condition. Independent problems are all reported in one run.
+
+func nop(x: int) -> void {
+    return;
+}
+
+func missing_type(p) -> int {
+    return 0;
+}
+
+func wrong_return(n: int) -> bool {
+    return n;
+}
+
+func mix_sign(a: u32, b: i32) -> u32 {
+    return a + b;
+}
+
+var cannot_infer = nop(1);
+var narrowed: i8 = 1000;
+var to_bool: bool = 1;
+var to_float: float = 2.5;
+
+var ok = 0;
+while (2.5) {
+    ok = ok + 1;
+}
+
+// CHECK-DAG: :12:19: error: parameter 'p' needs a type
+// CHECK-DAG: :21:14: error: operands of '+' have incompatible types u32 and i32
+// CHECK-DAG: :17:12: error: returning `int` from a function declared `-> bool`
+// CHECK-DAG: :24:1: error: cannot infer type of 'cannot_infer' from its initializer
+// CHECK-DAG: :25:20: error: cannot initialize 'narrowed' of type i8 from a value of type int (add an explicit `as i8`)
+// CHECK-DAG: :26:21: error: cannot initialize 'to_bool' of type bool from a value of type int
+// CHECK-DAG: :27:23: error: cannot initialize 'to_float' of type float from a value of type double
+// CHECK-DAG: :30:8: error: condition must be a bool or an integer, not double

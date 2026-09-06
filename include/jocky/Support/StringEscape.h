@@ -1,7 +1,7 @@
 // Turning the text of a string literal into the bytes it stands for, and back.
 //
 // Shared so the lexer and any tooling/tests agree on exactly which escape
-// sequences JOCKY understands. v0 supports: \n \t \r \\ \" \0
+// sequences JOCKY understands: \n \t \r \\ \" \' \0
 
 #ifndef JOCKY_SUPPORT_STRINGESCAPE_H
 #define JOCKY_SUPPORT_STRINGESCAPE_H

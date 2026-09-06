@@ -29,4 +29,35 @@ const char *binaryOpName(BinaryOp op) {
     return "<unknown>";
 }
 
+const char *binaryOpSymbol(BinaryOp op) {
+    switch (op) {
+    case BinaryOp::Add: return "+";
+    case BinaryOp::Sub: return "-";
+    case BinaryOp::Mul: return "*";
+    case BinaryOp::Div: return "/";
+    case BinaryOp::Mod: return "%";
+    case BinaryOp::Eq: return "==";
+    case BinaryOp::Ne: return "!=";
+    case BinaryOp::Lt: return "<";
+    case BinaryOp::Le: return "<=";
+    case BinaryOp::Gt: return ">";
+    case BinaryOp::Ge: return ">=";
+    }
+    return "?";
+}
+
+bool isComparison(BinaryOp op) {
+    switch (op) {
+    case BinaryOp::Eq:
+    case BinaryOp::Ne:
+    case BinaryOp::Lt:
+    case BinaryOp::Le:
+    case BinaryOp::Gt:
+    case BinaryOp::Ge:
+        return true;
+    default:
+        return false;
+    }
+}
+
 }  // namespace jocky::ast

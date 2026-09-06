@@ -5,11 +5,11 @@
 // RUN: %jocky build --emit-llvm --obfuscate=indirect --obf-seed 1 "%s" | %FileCheck "%s"
 // RUN: %jocky build --emit-llvm "%s" | %FileCheck --check-prefix=CLEAN "%s"
 
-func helper(a) {
+func helper(a: int) -> int {
     return a * 3;
 }
 
-func other(b) {
+func other(b: int) -> int {
     return helper(b) + 1;
 }
 

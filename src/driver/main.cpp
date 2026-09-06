@@ -34,6 +34,7 @@ const char *const kUsage =
     "  jocky build <in.jk> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
     "                      [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
     "                      [--keep-temps] [--no-verify] [-v]\n"
+    "  jocky check <in.jk>                    (front end + semantic analysis only)\n"
     "  jocky lex   --dump-tokens <in.jk>\n"
     "  jocky parse --dump-ast    <in.jk>\n"
     "  jocky --version\n"
@@ -75,6 +76,8 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
     // Sub-command.
     if (args[0] == "build") {
         opts.command = Command::Build;
+    } else if (args[0] == "check") {
+        opts.command = Command::Check;
     } else if (args[0] == "lex") {
         opts.command = Command::Lex;
     } else if (args[0] == "parse") {

@@ -308,7 +308,7 @@ void addObfuscationPasses(llvm::ModulePassManager &mpm,
     if (obf.verbose)
         llvm::errs() << "jocky: obfuscation seed " << seed << '\n';
 
-    // --- dispatch: keep in sync with kKnownPasses -------------------
+    // dispatch: keep in sync with kKnownPasses
     if (wanted("split"))
         mpm.addPass(BlockSplittingPass(seed ^ 0x1));
     if (wanted("flatten")) {

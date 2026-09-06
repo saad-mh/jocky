@@ -2,7 +2,7 @@
 // RUN: %jocky build "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-func fib(n) {
+func fib(n: int) -> int {
     if (n < 2) {
         return n;
     }

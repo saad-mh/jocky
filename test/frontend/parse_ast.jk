@@ -1,6 +1,6 @@
 // RUN: %jocky parse --dump-ast "%s" | %FileCheck "%s"
 
-func f(a, b) {
+func f(a: int, b: int) -> int {
     var x = a + b * 2;
     if (x < 10) {
         x = -x;
@@ -15,7 +15,7 @@ func f(a, b) {
 print(f(3, 4));
 
 // CHECK:      (module
-// CHECK-NEXT:   (func f (a b)
+// CHECK-NEXT:   (func f (a:int b:int) -> int
 // CHECK-NEXT:     (block
 // CHECK-NEXT:       (vardecl x
 // CHECK-NEXT:         (binary Add

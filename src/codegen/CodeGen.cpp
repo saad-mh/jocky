@@ -16,29 +16,33 @@ namespace jocky::codegen {
 
 namespace {
 
-llvm::CmpInst::Predicate predicateFor(ast::BinaryOp op) {
+// Integer comparison predicate; signedness picks SLT/ULT etc.
+llvm::CmpInst::Predicate intPredicate(ast::BinaryOp op, bool isSigned) {
     switch (op) {
     case ast::BinaryOp::Eq: return llvm::CmpInst::ICMP_EQ;
     case ast::BinaryOp::Ne: return llvm::CmpInst::ICMP_NE;
-    case ast::BinaryOp::Lt: return llvm::CmpInst::ICMP_SLT;
-    case ast::BinaryOp::Le: return llvm::CmpInst::ICMP_SLE;
-    case ast::BinaryOp::Gt: return llvm::CmpInst::ICMP_SGT;
-    case ast::BinaryOp::Ge: return llvm::CmpInst::ICMP_SGE;
-    default: return llvm::CmpInst::ICMP_EQ;  // not reached for non-comparisons
+    case ast::BinaryOp::Lt:
+        return isSigned ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT;
+    case ast::BinaryOp::Le:
+        return isSigned ? llvm::CmpInst::ICMP_SLE : llvm::CmpInst::ICMP_ULE;
+    case ast::BinaryOp::Gt:
+        return isSigned ? llvm::CmpInst::ICMP_SGT : llvm::CmpInst::ICMP_UGT;
+    case ast::BinaryOp::Ge:
+        return isSigned ? llvm::CmpInst::ICMP_SGE : llvm::CmpInst::ICMP_UGE;
+    default: return llvm::CmpInst::ICMP_EQ;  // not reached
     }
 }
 
-bool isComparison(ast::BinaryOp op) {
+// Ordered float comparison predicate (`!=` is unordered, matching C).
+llvm::CmpInst::Predicate floatPredicate(ast::BinaryOp op) {
     switch (op) {
-    case ast::BinaryOp::Eq:
-    case ast::BinaryOp::Ne:
-    case ast::BinaryOp::Lt:
-    case ast::BinaryOp::Le:
-    case ast::BinaryOp::Gt:
-    case ast::BinaryOp::Ge:
-        return true;
-    default:
-        return false;
+    case ast::BinaryOp::Eq: return llvm::CmpInst::FCMP_OEQ;
+    case ast::BinaryOp::Ne: return llvm::CmpInst::FCMP_UNE;
+    case ast::BinaryOp::Lt: return llvm::CmpInst::FCMP_OLT;
+    case ast::BinaryOp::Le: return llvm::CmpInst::FCMP_OLE;
+    case ast::BinaryOp::Gt: return llvm::CmpInst::FCMP_OGT;
+    case ast::BinaryOp::Ge: return llvm::CmpInst::FCMP_OGE;
+    default: return llvm::CmpInst::FCMP_OEQ;  // not reached
     }
 }
 
@@ -63,20 +67,40 @@ llvm::ConstantInt *CodeGen::i64(std::int64_t v) {
     return llvm::ConstantInt::getSigned(i64Ty(), v);
 }
 
+// The LLVM type for a JOCKY type. `bool` is `i1` (LLVM widens it to a byte in
+// memory on its own); the sized integers map to `iN`; `float`/`double` to the
+// IEEE types. `void` only appears as a function result.
+llvm::Type *CodeGen::llvmType(ast::Type t) {
+    switch (t.kind) {
+    case ast::TypeKind::Void: return llvm::Type::getVoidTy(ctx_);
+    case ast::TypeKind::Bool: return llvm::Type::getInt1Ty(ctx_);
+    case ast::TypeKind::Int: return llvm::Type::getIntNTy(ctx_, t.bits);
+    case ast::TypeKind::Float:
+        return t.bits == 32 ? llvm::Type::getFloatTy(ctx_)
+                            : llvm::Type::getDoubleTy(ctx_);
+    case ast::TypeKind::Error:
+        return i64Ty();  // unreachable post-sema; keeps codegen total
+    }
+    return i64Ty();
+}
+
+llvm::Value *CodeGen::zeroValue(ast::Type t) {
+    if (t.isFloat()) return llvm::ConstantFP::get(llvmType(t), 0.0);
+    return llvm::ConstantInt::get(llvmType(t), 0);
+}
+
 void CodeGen::error(SourceLocation loc, const llvm::Twine &message) {
     diags_.error(loc, message);
 }
 
-// --- top level ------------------------------------------------------
+// top level
 
 std::unique_ptr<llvm::Module> CodeGen::lowerModule(const ast::Module &program) {
     // Pass 1: declare every function so calls resolve no matter the order.
     for (const ast::FunctionDecl *fn : program.functions) declareFunction(*fn);
     declareImplicitMain();
 
-    // Pass 2: lower the bodies. This runs even if pass 1 reported errors so
-    // that independent problems are all found in one go; the module is thrown
-    // away by the caller when diags.hasErrors().
+    // Pass 2: lower the bodies.
     for (const ast::FunctionDecl *fn : program.functions) lowerFunctionBody(*fn);
     lowerImplicitMainBody(program);
 
@@ -84,20 +108,11 @@ std::unique_ptr<llvm::Module> CodeGen::lowerModule(const ast::Module &program) {
 }
 
 void CodeGen::declareFunction(const ast::FunctionDecl &fn) {
-    if (fn.name == "main") {
-        error(fn.loc,
-              "'main' is defined automatically from the top-level statements; "
-              "rename this function");
-        return;
-    }
-    if (functions_.count(fn.name)) {
-        error(fn.loc,
-              llvm::Twine("function '") + fn.name + "' is defined more than once");
-        return;
-    }
-
-    llvm::SmallVector<llvm::Type *, 8> paramTypes(fn.params.size(), i64Ty());
-    auto *fnTy = llvm::FunctionType::get(i64Ty(), paramTypes, /*isVarArg=*/false);
+    // Name clashes (a user `main`, a redefinition) are already rejected by sema.
+    llvm::SmallVector<llvm::Type *, 8> paramTypes;
+    for (const ast::Param &p : fn.params) paramTypes.push_back(llvmType(p.type));
+    auto *fnTy = llvm::FunctionType::get(llvmType(fn.resolvedReturn), paramTypes,
+                                         /*isVarArg=*/false);
     auto *f = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
                                      fn.name, module_.get());
     functions_[fn.name] = f;
@@ -118,65 +133,72 @@ llvm::Function *CodeGen::getOrDeclarePrintf() {
     return printfFn_;
 }
 
-llvm::Constant *CodeGen::internFormat(bool forString) {
-    if (forString) {
-        if (!strFormat_)
-            strFormat_ = builder_.CreateGlobalString("%s\n", "jocky.fmt.str", 0,
-                                                     module_.get());
-        return strFormat_;
-    }
-    if (!intFormat_)
-        intFormat_ = builder_.CreateGlobalString("%lld\n", "jocky.fmt.int", 0,
-                                                 module_.get());
-    return intFormat_;
+llvm::Constant *CodeGen::internFormat(llvm::StringRef text, llvm::StringRef name) {
+    auto it = formats_.find(name);
+    if (it != formats_.end()) return it->second;
+    llvm::Constant *g =
+        builder_.CreateGlobalString(text, name, 0, module_.get());
+    formats_[name] = g;
+    return g;
 }
 
 llvm::Constant *CodeGen::internCString(llvm::StringRef bytes) {
     return builder_.CreateGlobalString(bytes, "jocky.str", 0, module_.get());
 }
 
-// --- function bodies --------------------------------------------
+// func bodies
 
 llvm::AllocaInst *CodeGen::createEntryAlloca(llvm::Function *fn,
-                                             llvm::StringRef name) {
+                                             llvm::StringRef name,
+                                             llvm::Type *type) {
     llvm::IRBuilder<> entryBuilder(&fn->getEntryBlock(),
                                    fn->getEntryBlock().begin());
-    return entryBuilder.CreateAlloca(i64Ty(), nullptr, name);
+    return entryBuilder.CreateAlloca(type, nullptr, name);
 }
 
-llvm::AllocaInst *CodeGen::lookupLocal(llvm::StringRef name) {
+CodeGen::Local *CodeGen::lookupLocal(llvm::StringRef name) {
     auto it = locals_.find(name);
-    return it == locals_.end() ? nullptr : it->second;
+    return it == locals_.end() ? nullptr : &it->second;
+}
+
+void CodeGen::emitDefaultReturn() {
+    if (currentReturn_.isVoid()) {
+        builder_.CreateRetVoid();
+        return;
+    }
+    builder_.CreateRet(zeroValue(currentReturn_));
 }
 
 void CodeGen::lowerFunctionBody(const ast::FunctionDecl &fn) {
     llvm::Function *f = functions_.lookup(fn.name);
-    if (!f) return;         // its declaration failed earlier
-    if (!f->empty()) return;  // already lowered (e.g. a duplicate declaration)
+    if (!f) return;           // its declaration failed earlier
+    if (!f->empty()) return;  // already lowered, perchance
 
     auto *entry = llvm::BasicBlock::Create(ctx_, "entry", f);
     builder_.SetInsertPoint(entry);
     locals_.clear();
+    currentReturn_ = fn.resolvedReturn;
 
     unsigned i = 0;
     for (llvm::Argument &arg : f->args()) {
-        const std::string &paramName = fn.params[i].name;
-        arg.setName(paramName);
-        llvm::AllocaInst *slot = createEntryAlloca(f, paramName);
+        const ast::Param &p = fn.params[i];
+        arg.setName(p.name);
+        llvm::AllocaInst *slot = createEntryAlloca(f, p.name, llvmType(p.type));
         builder_.CreateStore(&arg, slot);
-        locals_[paramName] = slot;
+        locals_[p.name] = Local{slot, p.type};
         ++i;
     }
 
     lowerBlock(*fn.body);
 
-    if (!blockIsTerminated(builder_)) builder_.CreateRet(i64(0));
+    if (!blockIsTerminated(builder_)) emitDefaultReturn();
 }
 
 void CodeGen::lowerImplicitMainBody(const ast::Module &program) {
     auto *entry = llvm::BasicBlock::Create(ctx_, "entry", mainFn_);
     builder_.SetInsertPoint(entry);
     locals_.clear();
+    currentReturn_ = ast::Type::intTy();  // main is `-> int` (the exit code)
 
     for (const ast::Stmt *s : program.topLevelStatements) {
         lowerStmt(*s);
@@ -189,7 +211,7 @@ void CodeGen::lowerImplicitMainBody(const ast::Module &program) {
 void CodeGen::lowerBlock(const ast::Block &block) {
     for (const ast::Stmt *s : block.statements) {
         lowerStmt(*s);
-        if (blockIsTerminated(builder_)) break;  // rest of the block is unreachable
+        if (blockIsTerminated(builder_)) break;  // rest is unreachable
     }
 }
 
@@ -199,26 +221,28 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
         const auto &v = static_cast<const ast::VarDeclStmt &>(stmt);
         llvm::Value *init = lowerExpr(*v.init);
         if (!init) return;
-        llvm::AllocaInst *slot = lookupLocal(v.name);
-        if (!slot) {
-            slot = createEntryAlloca(builder_.GetInsertBlock()->getParent(),
-                                     v.name);
-            locals_[v.name] = slot;
+        Local *local = lookupLocal(v.name);
+        if (!local) {
+            llvm::AllocaInst *slot =
+                createEntryAlloca(builder_.GetInsertBlock()->getParent(), v.name,
+                                  llvmType(v.declaredType));
+            locals_[v.name] = Local{slot, v.declaredType};
+            local = lookupLocal(v.name);
         }
-        builder_.CreateStore(init, slot);
+        builder_.CreateStore(init, local->slot);
         return;
     }
     case ast::NodeKind::AssignStmt: {
         const auto &a = static_cast<const ast::AssignStmt &>(stmt);
         llvm::Value *value = lowerExpr(*a.value);
         if (!value) return;
-        llvm::AllocaInst *slot = lookupLocal(a.name);
-        if (!slot) {
-            error(a.loc, llvm::Twine("assignment to undeclared variable '") +
-                             a.name + "'");
+        Local *local = lookupLocal(a.name);
+        if (!local) {
+            error(a.loc,
+                  "internal: assignment to a variable sema did not resolve");
             return;
         }
-        builder_.CreateStore(value, slot);
+        builder_.CreateStore(value, local->slot);
         return;
     }
     case ast::NodeKind::ExprStmt:
@@ -232,7 +256,11 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
         return;
     case ast::NodeKind::ReturnStmt: {
         const auto &r = static_cast<const ast::ReturnStmt &>(stmt);
-        llvm::Value *v = r.value ? lowerExpr(*r.value) : i64(0);
+        if (!r.value) {
+            emitDefaultReturn();
+            return;
+        }
+        llvm::Value *v = lowerExpr(*r.value);
         if (!v) return;
         builder_.CreateRet(v);
         return;
@@ -291,51 +319,61 @@ void CodeGen::lowerWhile(const ast::WhileStmt &stmt) {
     builder_.SetInsertPoint(endBB);
 }
 
-// --- expressions ----------------------------------------------
+// exprr
 
 llvm::Value *CodeGen::lowerCondition(const ast::Expr &e) {
-    // A comparison is lowered straight to an i1 so the branch reads it directly.
-    if (e.kind == ast::NodeKind::BinaryExpr) {
-        const auto &b = static_cast<const ast::BinaryExpr &>(e);
-        if (isComparison(b.op)) {
-            llvm::Value *l = lowerExpr(*b.lhs);
-            llvm::Value *r = lowerExpr(*b.rhs);
-            if (!l || !r) return nullptr;
-            return builder_.CreateICmp(predicateFor(b.op), l, r, "cmp");
-        }
-    }
-    // Anything else: treat non-zero as true.
     llvm::Value *v = lowerExpr(e);
     if (!v) return nullptr;
-    return builder_.CreateICmpNE(v, i64(0), "tobool");
+    if (e.type.isBool()) return v;  // comparisons and bool values are already i1
+    // An integer in condition position is `!= 0` (L0.5).
+    return builder_.CreateICmpNE(v, llvm::ConstantInt::get(llvmType(e.type), 0),
+                                 "tobool");
 }
 
 llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
     switch (expr.kind) {
-    case ast::NodeKind::IntLiteralExpr:
-        return i64(static_cast<const ast::IntLiteralExpr &>(expr).value);
+    case ast::NodeKind::IntLiteralExpr: {
+        const auto &n = static_cast<const ast::IntLiteralExpr &>(expr);
+        return llvm::ConstantInt::get(llvmType(expr.type),
+                                      static_cast<std::uint64_t>(n.value),
+                                      expr.type.isSigned);
+    }
+    case ast::NodeKind::FloatLiteralExpr: {
+        const auto &n = static_cast<const ast::FloatLiteralExpr &>(expr);
+        return llvm::ConstantFP::get(llvmType(expr.type), n.value);
+    }
+    case ast::NodeKind::CharLiteralExpr:
+        return llvm::ConstantInt::get(
+            llvmType(expr.type),
+            static_cast<const ast::CharLiteralExpr &>(expr).value);
+    case ast::NodeKind::BoolLiteralExpr:
+        return llvm::ConstantInt::get(
+            llvmType(expr.type),
+            static_cast<const ast::BoolLiteralExpr &>(expr).value ? 1 : 0);
 
     case ast::NodeKind::StringLiteralExpr:
-        error(expr.loc,
-              "a string literal can only be passed directly to print(...)");
+        // sema only lets a string literal through as a direct print(...) arg,
+        // which lowerPrint handles without calling lowerExpr.
+        error(expr.loc, "internal: bare string literal reached codegen");
         return nullptr;
 
     case ast::NodeKind::VarRefExpr: {
         const auto &v = static_cast<const ast::VarRefExpr &>(expr);
-        llvm::AllocaInst *slot = lookupLocal(v.name);
-        if (!slot) {
+        Local *local = lookupLocal(v.name);
+        if (!local) {
             error(v.loc,
-                  llvm::Twine("use of undeclared variable '") + v.name + "'");
+                  "internal: reference to a variable sema did not resolve");
             return nullptr;
         }
-        return builder_.CreateLoad(i64Ty(), slot, v.name);
+        return builder_.CreateLoad(llvmType(local->type), local->slot, v.name);
     }
 
     case ast::NodeKind::UnaryExpr: {
         const auto &u = static_cast<const ast::UnaryExpr &>(expr);
         llvm::Value *operand = lowerExpr(*u.operand);
         if (!operand) return nullptr;
-        return builder_.CreateNeg(operand, "neg");  // only Neg exists in v0
+        return expr.type.isFloat() ? builder_.CreateFNeg(operand, "fneg")
+                                   : builder_.CreateNeg(operand, "neg");
     }
 
     case ast::NodeKind::BinaryExpr:
@@ -344,10 +382,59 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
     case ast::NodeKind::CallExpr:
         return lowerCall(static_cast<const ast::CallExpr &>(expr));
 
+    case ast::NodeKind::CastExpr:
+    case ast::NodeKind::ImplicitConversionExpr:
+        return lowerConversion(expr);
+
     default:
         error(expr.loc, "internal: unexpected expression kind in codegen");
         return nullptr;
     }
+}
+
+llvm::Value *CodeGen::lowerConversion(const ast::Expr &expr) {
+    const ast::Expr *operand =
+        expr.kind == ast::NodeKind::CastExpr
+            ? static_cast<const ast::CastExpr &>(expr).operand
+            : static_cast<const ast::ImplicitConversionExpr &>(expr).operand;
+
+    llvm::Value *v = lowerExpr(*operand);
+    if (!v) return nullptr;
+    return emitConvert(v, operand->type, expr.type);
+}
+
+llvm::Value *CodeGen::emitConvert(llvm::Value *v, ast::Type from, ast::Type to) {
+    if (from == to) return v;
+    llvm::Type *dst = llvmType(to);
+
+    if (to.isBool()) {
+        if (from.isFloat())
+            return builder_.CreateFCmpUNE(
+                v, llvm::ConstantFP::get(llvmType(from), 0.0), "tobool");
+        return builder_.CreateICmpNE(
+            v, llvm::ConstantInt::get(llvmType(from), 0), "tobool");
+    }
+    if (from.isBool()) {
+        if (to.isFloat())
+            return builder_.CreateUIToFP(v, dst, "booltofp");
+        return builder_.CreateZExt(v, dst, "booltoint");
+    }
+    if (from.isInteger() && to.isInteger()) {
+        if (to.bits == from.bits) return v;  // sign reinterpretation is a no-op
+        if (to.bits < from.bits) return builder_.CreateTrunc(v, dst, "trunc");
+        return from.isSigned ? builder_.CreateSExt(v, dst, "sext")
+                             : builder_.CreateZExt(v, dst, "zext");
+    }
+    if (from.isInteger() && to.isFloat())
+        return from.isSigned ? builder_.CreateSIToFP(v, dst, "sitofp")
+                             : builder_.CreateUIToFP(v, dst, "uitofp");
+    if (from.isFloat() && to.isInteger())
+        return to.isSigned ? builder_.CreateFPToSI(v, dst, "fptosi")
+                           : builder_.CreateFPToUI(v, dst, "fptoui");
+    if (from.isFloat() && to.isFloat())
+        return to.bits < from.bits ? builder_.CreateFPTrunc(v, dst, "fptrunc")
+                                   : builder_.CreateFPExt(v, dst, "fpext");
+    return v;  // unreachable post-sema
 }
 
 llvm::Value *CodeGen::lowerBinary(const ast::BinaryExpr &e) {
@@ -355,55 +442,57 @@ llvm::Value *CodeGen::lowerBinary(const ast::BinaryExpr &e) {
     llvm::Value *r = lowerExpr(*e.rhs);
     if (!l || !r) return nullptr;
 
+    // sema has coerced both sides to one type; read it off the lhs.
+    const ast::Type opTy = e.lhs->type;
+
+    if (ast::isComparison(e.op)) {
+        return opTy.isFloat()
+                   ? builder_.CreateFCmp(floatPredicate(e.op), l, r, "fcmp")
+                   : builder_.CreateICmp(intPredicate(e.op, opTy.isSigned), l, r,
+                                         "cmp");
+    }
+
+    if (opTy.isFloat()) {
+        switch (e.op) {
+        case ast::BinaryOp::Add: return builder_.CreateFAdd(l, r, "fadd");
+        case ast::BinaryOp::Sub: return builder_.CreateFSub(l, r, "fsub");
+        case ast::BinaryOp::Mul: return builder_.CreateFMul(l, r, "fmul");
+        case ast::BinaryOp::Div: return builder_.CreateFDiv(l, r, "fdiv");
+        default: break;
+        }
+        error(e.loc, "internal: bad float binary operator in codegen");
+        return nullptr;
+    }
+
     switch (e.op) {
     case ast::BinaryOp::Add: return builder_.CreateAdd(l, r, "add");
     case ast::BinaryOp::Sub: return builder_.CreateSub(l, r, "sub");
     case ast::BinaryOp::Mul: return builder_.CreateMul(l, r, "mul");
-    case ast::BinaryOp::Div: return builder_.CreateSDiv(l, r, "div");
-    case ast::BinaryOp::Mod: return builder_.CreateSRem(l, r, "rem");
-    default:
-        break;  // a comparison; handled below
+    case ast::BinaryOp::Div:
+        return opTy.isSigned ? builder_.CreateSDiv(l, r, "div")
+                             : builder_.CreateUDiv(l, r, "div");
+    case ast::BinaryOp::Mod:
+        return opTy.isSigned ? builder_.CreateSRem(l, r, "rem")
+                             : builder_.CreateURem(l, r, "rem");
+    default: break;
     }
-
-    // Comparison used as a value: i1 result widened back to i64 (0 or 1).
-    llvm::Value *cmp = builder_.CreateICmp(predicateFor(e.op), l, r, "cmp");
-    return builder_.CreateZExt(cmp, i64Ty(), "ext");
+    error(e.loc, "internal: bad integer binary operator in codegen");
+    return nullptr;
 }
 
 llvm::Value *CodeGen::lowerCall(const ast::CallExpr &e) {
     if (e.callee == "print") {
         if (e.args.size() != 1) {
-            error(e.loc, llvm::Twine("print expects exactly 1 argument but got ") +
-                             llvm::Twine(e.args.size()));
+            error(e.loc,
+                  "internal: print reached codegen with a bad argument count");
             return nullptr;
         }
-        const ast::Expr &arg = *e.args[0];
-        llvm::Function *printf = getOrDeclarePrintf();
-
-        if (arg.kind == ast::NodeKind::StringLiteralExpr) {
-            const auto &s = static_cast<const ast::StringLiteralExpr &>(arg);
-            llvm::Value *callArgs[] = {internFormat(/*forString=*/true),
-                                       internCString(s.value)};
-            builder_.CreateCall(printf->getFunctionType(), printf, callArgs);
-        } else {
-            llvm::Value *v = lowerExpr(arg);
-            if (!v) return nullptr;
-            llvm::Value *callArgs[] = {internFormat(/*forString=*/false), v};
-            builder_.CreateCall(printf->getFunctionType(), printf, callArgs);
-        }
-        return i64(0);  // print(...) has the value 0
+        return lowerPrint(*e.args[0]);
     }
 
     llvm::Function *callee = functions_.lookup(e.callee);
     if (!callee) {
-        error(e.loc,
-              llvm::Twine("call to undefined function '") + e.callee + "'");
-        return nullptr;
-    }
-    if (callee->arg_size() != e.args.size()) {
-        error(e.loc, llvm::Twine("function '") + e.callee + "' expects " +
-                         llvm::Twine(callee->arg_size()) + " argument(s) but " +
-                         llvm::Twine(e.args.size()) + " were given");
+        error(e.loc, "internal: call to a function sema did not resolve");
         return nullptr;
     }
 
@@ -413,7 +502,56 @@ llvm::Value *CodeGen::lowerCall(const ast::CallExpr &e) {
         if (!v) return nullptr;
         args.push_back(v);
     }
-    return builder_.CreateCall(callee, args, "call");
+    llvm::CallInst *call = builder_.CreateCall(callee, args);
+    if (!callee->getReturnType()->isVoidTy()) call->setName("call");
+    return call;
+}
+
+// `print(x)`: the format string is chosen from the argument's type (L0.8).
+llvm::Value *CodeGen::lowerPrint(const ast::Expr &arg) {
+    llvm::Function *printf = getOrDeclarePrintf();
+
+    auto call = [&](llvm::Constant *fmt, llvm::Value *value) {
+        llvm::Value *a[] = {fmt, value};
+        builder_.CreateCall(printf->getFunctionType(), printf, a);
+    };
+
+    if (arg.kind == ast::NodeKind::StringLiteralExpr) {
+        const auto &s = static_cast<const ast::StringLiteralExpr &>(arg);
+        call(internFormat("%s\n", "jocky.fmt.str"), internCString(s.value));
+        return i64(0);
+    }
+
+    llvm::Value *v = lowerExpr(arg);
+    if (!v) return nullptr;
+    const ast::Type t = arg.type;
+
+    if (t.isBool()) {
+        llvm::Value *sel = builder_.CreateSelect(v, internCString("true"),
+                                                 internCString("false"),
+                                                 "boolstr");
+        call(internFormat("%s\n", "jocky.fmt.str"), sel);
+    } else if (t.isFloat()) {
+        llvm::Value *d =
+            t.bits == 32
+                ? builder_.CreateFPExt(v, llvm::Type::getDoubleTy(ctx_), "fpext")
+                : v;
+        call(internFormat("%g\n", "jocky.fmt.flt"), d);
+    } else if (t == ast::Type::charTy()) {
+        llvm::Value *c =
+            builder_.CreateZExt(v, llvm::Type::getInt32Ty(ctx_), "chararg");
+        call(internFormat("%c\n", "jocky.fmt.chr"), c);
+    } else {  // any other integer
+        llvm::Value *wide = v;
+        if (t.bits < 64)
+            wide = t.isSigned ? builder_.CreateSExt(v, i64Ty(), "intarg")
+                              : builder_.CreateZExt(v, i64Ty(), "intarg");
+        if (t.isSigned)
+            call(internFormat("%lld\n", "jocky.fmt.int"), wide);
+        else
+            call(internFormat("%llu\n", "jocky.fmt.uint"), wide);
+    }
+    return i64(0);  // print(...) evaluates to 0
 }
 
 }  // namespace jocky::codegen
