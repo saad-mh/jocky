@@ -60,6 +60,7 @@ private:
     llvm::ConstantInt *i64(std::int64_t v);
     llvm::Type *llvmType(ast::Type t);
     llvm::StructType *sliceTy();  // the { ptr, i64 } layout every slice shares
+    llvm::StructType *structTy(const ast::StructInfo &si);
     llvm::Value *zeroValue(ast::Type t);
 
     // --- declarations ---
@@ -123,6 +124,7 @@ private:
     llvm::Function *mainFn_ = nullptr;  // the implicit main
     llvm::Function *printfFn_ = nullptr;
     llvm::StructType *sliceTy_ = nullptr;
+    llvm::StringMap<llvm::StructType *> structTypes_;  // one per struct name
     llvm::StringMap<llvm::Constant *> formats_;  // printf format strings, by name
 };
 

@@ -41,6 +41,7 @@ enum class NodeKind {
     AddrOfExpr,          // &lvalue
     DerefExpr,           // *ptr
     SizeofExpr,          // sizeof(T) / sizeof(expr)
+    OffsetofExpr,        // offsetof(Struct, field)
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -52,6 +53,7 @@ enum class NodeKind {
     // Type syntax.
     TypeExpr,
     // Top level.
+    StructDecl,
     FunctionDecl,
     Module,
 };
@@ -276,6 +278,16 @@ struct SizeofExpr : Expr {
     explicit SizeofExpr(SourceLocation l) : Expr(NodeKind::SizeofExpr, l) {}
 };
 
+// `offsetof(Struct, field)` - a compile-time `int` byte offset.
+struct OffsetofExpr : Expr {
+    std::string structName;
+    std::string fieldName;
+    unsigned long long resolvedOffset = 0;  // filled by sema
+    OffsetofExpr(SourceLocation l, std::string s, std::string f)
+        : Expr(NodeKind::OffsetofExpr, l), structName(std::move(s)),
+          fieldName(std::move(f)) {}
+};
+
 // Statements
 
 struct VarDeclStmt : Stmt {
@@ -336,6 +348,21 @@ struct Param {
     Type type;                           // resolved by sema
 };
 
+// `struct Name { field: T, ... }` - fields in declared order, C natural
+// alignment, no reordering. Sema builds an `ast::StructInfo` from this.
+struct FieldDecl {
+    std::string name;
+    SourceLocation loc;
+    TypeExpr *typeAnnotation = nullptr;
+};
+
+struct StructDecl : Node {
+    std::string name;
+    std::vector<FieldDecl> fields;
+    StructDecl(SourceLocation l, std::string n)
+        : Node(NodeKind::StructDecl, l), name(std::move(n)) {}
+};
+
 struct FunctionDecl : Node {
     std::string name;
     std::vector<Param> params;
@@ -347,6 +374,7 @@ struct FunctionDecl : Node {
 };
 
 struct Module : Node {
+    std::vector<StructDecl *> structs;
     std::vector<FunctionDecl *> functions;
     std::vector<Stmt *> topLevelStatements;  // run as the body of an implicit main
 

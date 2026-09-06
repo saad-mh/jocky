@@ -84,7 +84,12 @@ std::unique_ptr<ast::Module> Parser::parseModule() {
     module_ = std::make_unique<ast::Module>();
 
     while (!atEnd() && !tooManyErrors()) {
-        if (check(TokenKind::KwFunc)) {
+        if (check(TokenKind::KwStruct)) {
+            if (ast::StructDecl *s = parseStructDecl())
+                module_->structs.push_back(s);
+            else
+                synchronize();
+        } else if (check(TokenKind::KwFunc)) {
             if (ast::FunctionDecl *fn = parseFunctionDecl())
                 module_->functions.push_back(fn);
             else
@@ -98,6 +103,40 @@ std::unique_ptr<ast::Module> Parser::parseModule() {
     }
 
     return std::move(module_);
+}
+
+// `struct Name { field: type, field: type, }` - `,` separates fields and may
+// trail; a newline does not (JOCKY is not newline-sensitive).
+ast::StructDecl *Parser::parseStructDecl() {
+    const SourceLocation loc = current().location;
+    advance();  // 'struct'
+
+    if (!check(TokenKind::Identifier)) {
+        diags_.error(current().location, "expected a struct name after 'struct'");
+        return nullptr;
+    }
+    auto *decl = make<ast::StructDecl>(loc, current().spelling.str());
+    advance();
+
+    if (!expect(TokenKind::LBrace, "'{' to open the struct body")) return nullptr;
+    while (!check(TokenKind::RBrace) && !atEnd() && !tooManyErrors()) {
+        if (!check(TokenKind::Identifier)) {
+            diags_.error(current().location, "expected a field name");
+            return nullptr;
+        }
+        ast::FieldDecl f;
+        f.name = current().spelling.str();
+        f.loc = current().location;
+        advance();
+        if (!expect(TokenKind::Colon, "':' and a type after the field name"))
+            return nullptr;
+        f.typeAnnotation = parseType();
+        if (!f.typeAnnotation) return nullptr;
+        decl->fields.push_back(std::move(f));
+        if (!match(TokenKind::Comma)) break;
+    }
+    if (!expect(TokenKind::RBrace, "'}' to close the struct body")) return nullptr;
+    return decl;
 }
 
 ast::FunctionDecl *Parser::parseFunctionDecl() {
@@ -641,6 +680,29 @@ ast::Expr *Parser::parsePrimary() {
     case TokenKind::KwNull:
         advance();
         return make<ast::NullLiteralExpr>(tok.location);
+
+    case TokenKind::KwOffsetof: {
+        const SourceLocation loc = tok.location;
+        advance();  // 'offsetof'
+        if (!expect(TokenKind::LParen, "'(' after 'offsetof'")) return nullptr;
+        if (!check(TokenKind::Identifier)) {
+            diags_.error(current().location, "expected a struct name");
+            return nullptr;
+        }
+        std::string sname = current().spelling.str();
+        advance();
+        if (!expect(TokenKind::Comma, "',' between the struct and field names"))
+            return nullptr;
+        if (!check(TokenKind::Identifier)) {
+            diags_.error(current().location, "expected a field name");
+            return nullptr;
+        }
+        std::string fname = current().spelling.str();
+        advance();
+        if (!expect(TokenKind::RParen, "')' to close 'offsetof(...)'"))
+            return nullptr;
+        return make<ast::OffsetofExpr>(loc, std::move(sname), std::move(fname));
+    }
 
     case TokenKind::KwSizeof: {
         const SourceLocation loc = tok.location;

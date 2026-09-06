@@ -84,10 +84,29 @@ llvm::Type *CodeGen::llvmType(ast::Type t) {
         return sliceTy();
     case ast::TypeKind::Pointer:
         return ptrTy();  // opaque - `ptr<T>` and `rawptr` are the same in IR
+    case ast::TypeKind::Struct:
+        return structTy(t.structInfo());
     case ast::TypeKind::Error:
         return i64Ty();  // unreachable post-sema; keeps codegen total
     }
     return i64Ty();
+}
+
+// The LLVM struct for a JOCKY struct, one per name. Fields keep declaration
+// order; for scalar / pointer fields LLVM's natural layout matches the C
+// offsets sema computed (which `offsetof` reports).
+llvm::StructType *CodeGen::structTy(const ast::StructInfo &si) {
+    auto it = structTypes_.find(si.name);
+    if (it != structTypes_.end()) return it->second;
+
+    llvm::StructType *st = llvm::StructType::create(ctx_, "struct." + si.name);
+    structTypes_[si.name] = st;  // register before recursing (self via ptr<S>)
+
+    llvm::SmallVector<llvm::Type *, 8> fieldTys;
+    for (const ast::FieldInfo &f : si.fields)
+        fieldTys.push_back(llvmType(f.type));
+    st->setBody(fieldTys);
+    return st;
 }
 
 // Every slice, whatever its element type, is a { ptr, i64 } pair: the base
@@ -418,6 +437,9 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
     case ast::NodeKind::SizeofExpr:
         return i64(static_cast<std::int64_t>(
             static_cast<const ast::SizeofExpr &>(expr).measured.byteSize()));
+    case ast::NodeKind::OffsetofExpr:
+        return i64(static_cast<std::int64_t>(
+            static_cast<const ast::OffsetofExpr &>(expr).resolvedOffset));
     case ast::NodeKind::AddrOfExpr:
         return lowerAddr(*static_cast<const ast::AddrOfExpr &>(expr).operand);
     case ast::NodeKind::DerefExpr: {
@@ -455,6 +477,25 @@ llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
     }
     if (e.kind == ast::NodeKind::DerefExpr)
         return lowerExpr(*static_cast<const ast::DerefExpr &>(e).operand);
+    if (e.kind == ast::NodeKind::MemberExpr) {
+        const auto &m = static_cast<const ast::MemberExpr &>(e);
+        // A struct value: address of the aggregate. A `ptr<S>`: the pointer is
+        // already the address.
+        const ast::Type baseT = m.base->type;
+        llvm::Value *basePtr = baseT.isTypedPointer()
+                                   ? lowerExpr(*m.base)
+                                   : lowerAddr(*m.base);
+        if (!basePtr) return nullptr;
+        const ast::StructInfo &si =
+            baseT.isTypedPointer() ? baseT.pointee().structInfo()
+                                   : baseT.structInfo();
+        const ast::FieldInfo *f = si.find(m.member);
+        const unsigned idx = static_cast<unsigned>(f - si.fields.data());
+        return builder_.CreateGEP(
+            structTy(si), basePtr,
+            {i64(0), llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx_), idx)},
+            m.member + ".addr");
+    }
     error(e.loc, "internal: expression is not an lvalue in codegen");
     return nullptr;
 }
@@ -504,7 +545,16 @@ llvm::Value *CodeGen::lowerIndex(const ast::IndexExpr &e) {
 }
 
 llvm::Value *CodeGen::lowerMember(const ast::MemberExpr &e) {
-    // Only `.len` exists.
+    // A struct field (of a value or through a ptr<S>): load from its address.
+    const ast::Type baseT = e.base->type;
+    if (baseT.isStruct() ||
+        (baseT.isTypedPointer() && baseT.pointee().isStruct())) {
+        llvm::Value *addr = lowerAddr(e);
+        if (!addr) return nullptr;
+        return builder_.CreateLoad(llvmType(e.type), addr, e.member);
+    }
+
+    // `.len` on an array or slice.
     if (e.base->type.isArray())
         return i64(static_cast<std::int64_t>(e.base->type.length));
     llvm::Value *s = lowerExpr(*e.base);
@@ -553,6 +603,13 @@ llvm::Value *CodeGen::lowerConversion(const ast::Expr &expr) {
         expr.kind == ast::NodeKind::CastExpr
             ? static_cast<const ast::CastExpr &>(expr).operand
             : static_cast<const ast::ImplicitConversionExpr &>(expr).operand;
+
+    // Array / slice `as` a pointer: hand back the base address (L1.6 overlay).
+    if ((operand->type.isArray() || operand->type.isSlice()) &&
+        expr.type.isPointer()) {
+        SeqRef seq = sequenceOf(*operand);
+        return seq.basePtr;
+    }
 
     llvm::Value *v = lowerExpr(*operand);
     if (!v) return nullptr;

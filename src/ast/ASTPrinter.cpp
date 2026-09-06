@@ -32,6 +32,7 @@ public:
     void module(const Module &m) {
         line("(module");
         indent_ += 1;
+        for (const StructDecl *s : m.structs) structDecl(*s);
         for (const FunctionDecl *fn : m.functions) function(*fn);
         if (!m.topLevelStatements.empty()) {
             line("(toplevel");
@@ -45,6 +46,15 @@ public:
     }
 
 private:
+    void structDecl(const StructDecl &s) {
+        std::string head = "(struct " + s.name + " (";
+        for (std::size_t i = 0; i < s.fields.size(); ++i) {
+            if (i) head += " ";
+            head += s.fields[i].name + ":" + typeName(s.fields[i].typeAnnotation);
+        }
+        line(head + "))");
+    }
+
     void function(const FunctionDecl &fn) {
         std::string head = "(func " + fn.name + " (";
         for (std::size_t i = 0; i < fn.params.size(); ++i) {
@@ -331,6 +341,11 @@ private:
                 indent_ -= 1;
                 line(")");
             }
+            break;
+        }
+        case NodeKind::OffsetofExpr: {
+            const auto &n = static_cast<const OffsetofExpr &>(e);
+            line("(offsetof " + n.structName + " " + n.fieldName + ty(e) + ")");
             break;
         }
         default:
