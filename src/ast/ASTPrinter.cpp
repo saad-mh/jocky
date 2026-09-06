@@ -146,6 +146,12 @@ private:
         }
     }
 
+    // The resolved type, once sema has run: " :int", " :char[]", ... Empty when
+    // the AST is dumped before sema, or when this node failed to check.
+    static std::string ty(const Expr &e) {
+        return e.type.isError() ? std::string() : " :" + e.type.name();
+    }
+
     void expr(const Expr &e) {
         switch (e.kind) {
         case NodeKind::IntLiteralExpr: {
@@ -154,34 +160,35 @@ private:
             if (n.suffixBits != 0)
                 text += std::string(" ") + (n.suffixSigned ? "i" : "u") +
                         std::to_string(n.suffixBits);
-            line(text + ")");
+            line(text + ty(e) + ")");
             break;
         }
         case NodeKind::FloatLiteralExpr: {
             const auto &n = static_cast<const FloatLiteralExpr &>(e);
             line("(floatlit " + std::to_string(n.value) + (n.isF32 ? "f" : "") +
-                 ")");
+                 ty(e) + ")");
             break;
         }
         case NodeKind::CharLiteralExpr: {
             const auto &n = static_cast<const CharLiteralExpr &>(e);
             line("(charlit " + std::to_string(static_cast<unsigned>(n.value)) +
-                 ")");
+                 ty(e) + ")");
             break;
         }
         case NodeKind::BoolLiteralExpr: {
             const auto &n = static_cast<const BoolLiteralExpr &>(e);
-            line(std::string("(boollit ") + (n.value ? "true" : "false") + ")");
+            line(std::string("(boollit ") + (n.value ? "true" : "false") +
+                 ty(e) + ")");
             break;
         }
         case NodeKind::StringLiteralExpr: {
             const auto &n = static_cast<const StringLiteralExpr &>(e);
-            line("(strlit " + encodeStringLiteral(n.value) + ")");
+            line("(strlit " + encodeStringLiteral(n.value) + ty(e) + ")");
             break;
         }
         case NodeKind::CastExpr: {
             const auto &n = static_cast<const CastExpr &>(e);
-            line("(cast " + typeName(n.targetType));
+            line("(cast " + typeName(n.targetType) + ty(e));
             indent_ += 1;
             expr(*n.operand);
             indent_ -= 1;
@@ -190,7 +197,7 @@ private:
         }
         case NodeKind::ImplicitConversionExpr: {
             const auto &n = static_cast<const ImplicitConversionExpr &>(e);
-            line("(convert " + n.type.name());
+            line("(convert" + ty(e));
             indent_ += 1;
             expr(*n.operand);
             indent_ -= 1;
@@ -199,12 +206,12 @@ private:
         }
         case NodeKind::VarRefExpr: {
             const auto &n = static_cast<const VarRefExpr &>(e);
-            line("(varref " + n.name + ")");
+            line("(varref " + n.name + ty(e) + ")");
             break;
         }
         case NodeKind::UnaryExpr: {
             const auto &n = static_cast<const UnaryExpr &>(e);
-            line(std::string("(unary ") + unaryOpName(n.op));
+            line(std::string("(unary ") + unaryOpName(n.op) + ty(e));
             indent_ += 1;
             expr(*n.operand);
             indent_ -= 1;
@@ -213,7 +220,7 @@ private:
         }
         case NodeKind::BinaryExpr: {
             const auto &n = static_cast<const BinaryExpr &>(e);
-            line(std::string("(binary ") + binaryOpName(n.op));
+            line(std::string("(binary ") + binaryOpName(n.op) + ty(e));
             indent_ += 1;
             expr(*n.lhs);
             expr(*n.rhs);
@@ -223,7 +230,7 @@ private:
         }
         case NodeKind::CallExpr: {
             const auto &n = static_cast<const CallExpr &>(e);
-            line("(call " + n.callee);
+            line("(call " + n.callee + ty(e));
             indent_ += 1;
             for (const Expr *a : n.args) expr(*a);
             indent_ -= 1;
@@ -232,7 +239,7 @@ private:
         }
         case NodeKind::ArrayLiteralExpr: {
             const auto &n = static_cast<const ArrayLiteralExpr &>(e);
-            line("(arraylit");
+            line("(arraylit" + ty(e));
             indent_ += 1;
             for (const Expr *el : n.elements) expr(*el);
             indent_ -= 1;
@@ -241,7 +248,7 @@ private:
         }
         case NodeKind::IndexExpr: {
             const auto &n = static_cast<const IndexExpr &>(e);
-            line("(index");
+            line("(index" + ty(e));
             indent_ += 1;
             expr(*n.base);
             expr(*n.index);
@@ -251,7 +258,7 @@ private:
         }
         case NodeKind::SliceExpr: {
             const auto &n = static_cast<const SliceExpr &>(e);
-            line("(slice");
+            line("(slice" + ty(e));
             indent_ += 1;
             expr(*n.base);
             line(n.lo ? "(lo" : "(lo -)");
@@ -274,7 +281,7 @@ private:
         }
         case NodeKind::MemberExpr: {
             const auto &n = static_cast<const MemberExpr &>(e);
-            line("(member " + n.member);
+            line("(member " + n.member + ty(e));
             indent_ += 1;
             expr(*n.base);
             indent_ -= 1;
@@ -283,7 +290,7 @@ private:
         }
         case NodeKind::ArrayToSliceExpr: {
             const auto &n = static_cast<const ArrayToSliceExpr &>(e);
-            line("(decay " + n.type.name());
+            line("(decay" + ty(e));
             indent_ += 1;
             expr(*n.array);
             indent_ -= 1;
