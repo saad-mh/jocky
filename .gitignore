@@ -17,3 +17,5 @@ compile_commands.json
 # Compiler intermediates that may land next to sources or examples
 *.o
 *.obj
+
+.claude/

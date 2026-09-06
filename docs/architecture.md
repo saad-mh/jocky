@@ -67,11 +67,11 @@ You can see the result with `jocky build --emit-llvm hello.jk`.
 
 ## 5. Codegen - transform pipeline (`src/codegen/PassPipeline.cpp`)
 
-`runTransformPipeline` is the single place where IR transform passes run. Today
-it does nothing at `-O0` and runs LLVM's standard `-O1` pipeline at `-O1`. It is
-kept to one function on purpose: the project's longer-term plans include custom
-per-build passes, and this is the spot where they will be added, with no change
-to any caller. See `codegen-and-passes.md`.
+`runTransformPipeline` is the single place where IR transform passes run. It does
+nothing at `-O0`, runs LLVM's standard `-O1` pipeline at `-O1`, and - when
+`--obfuscate` was given - appends JOCKY's own obfuscation passes after that. It
+is kept to one function on purpose, so new per-build passes can be added with no
+change to any caller. See `codegen-and-passes.md`.
 
 ## 6. Codegen - object file (`src/codegen/ObjectEmitter.cpp`)
 

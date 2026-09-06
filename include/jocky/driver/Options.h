@@ -7,6 +7,7 @@
 #ifndef JOCKY_DRIVER_OPTIONS_H
 #define JOCKY_DRIVER_OPTIONS_H
 
+#include <cstdint>
 #include <string>
 
 namespace jocky::driver {
@@ -39,6 +40,16 @@ struct Options {
     // `build` behavior tweaks.
     bool keepTemps = false;    // --keep-temps: don't delete the intermediate .obj
     bool verifyModule = true;  // cleared by --no-verify (debugging only)
+
+    // Obfuscation (build only). --obfuscate turns JOCKY's own IR obfuscation
+    // passes on; --obfuscate=<a,b,...> restricts them to a named subset. These
+    // run whether or not -O1 was asked for.
+    bool obfuscate = false;
+    std::string obfuscatePasses;  // empty => all passes, when `obfuscate` is set
+
+    // --obf-seed <n>: seed the randomised parts of those passes so a build is
+    // reproducible. 0 (the default) means "derive one at run time".
+    std::uint64_t obfSeed = 0;
 
     // Debug dumps for the Lex / Parse sub-commands.
     bool dumpTokens = false;  // lex --dump-tokens

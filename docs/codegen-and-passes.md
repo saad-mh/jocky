@@ -35,39 +35,57 @@ SSA values.
     // include/jocky/codegen/PassPipeline.h
     void runTransformPipeline(llvm::Module &module,
                               llvm::TargetMachine *machine,
-                              OptLevel level);
+                              OptLevel level,
+                              const ObfuscationOptions &obf = {});
 
 Every IR/MIR transform goes through this one function. The driver calls it once,
-after lowering and before object emission (and, for `--emit-llvm -O1`, before
-printing). Callers pass only an `OptLevel`.
+after lowering and before object emission (and, for `--emit-llvm` with `-O1` or
+`--obfuscate`, before printing).
 
-Today the body is short:
+The body, in order:
 
-- `OptLevel::O0` runs an empty `ModulePassManager` - a valid no-op.
-- `OptLevel::O1` runs `PassBuilder::buildPerModuleDefaultPipeline(O1)`.
+- `OptLevel::O0` starts from an empty `ModulePassManager` - a valid no-op.
+  `OptLevel::O1` starts from `PassBuilder::buildPerModuleDefaultPipeline(O1)`.
+  (`buildPerModuleDefaultPipeline` asserts if given `O0`, which is why `O0` uses
+  an empty manager rather than asking for an "`O0` pipeline".)
+- If `obf.enabled`, `addObfuscationPasses()` appends JOCKY's obfuscation passes
+  **after** the `-O1` pipeline, so its cleanup (DCE, instcombine, ...) does not
+  simplify them back out.
+- `mpm.run(module, mam)`.
+- In debug builds, when obfuscation ran, the module is re-verified; a failure is
+  a pass bug and aborts rather than emitting a broken object.
 
-`buildPerModuleDefaultPipeline` asserts if given `O0`, which is why `O0` uses an
-empty manager rather than asking the builder for an "`O0` pipeline".
+## The obfuscation passes
 
-## Adding a custom pass later
+`--obfuscate` (optionally `--obfuscate=<a,b,...>` for a subset) turns on the
+passes in `src/codegen/Obfuscation.cpp`. `--obf-seed <n>` pins the RNG so a build
+is reproducible; with no seed one is derived at run time, and `-v` echoes it.
 
-The project's longer-term goal includes passes that make each build's machine
-code structurally different. When that work starts, it goes **inside**
-`runTransformPipeline`, at the marked comment, and nothing else changes:
+Registered so far:
 
-    llvm::ModulePassManager mpm;
-    if (level == OptLevel::O1)
-        mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O1);
+| name   | what it does                                                        |
+|--------|--------------------------------------------------------------------|
+| `junk` | inserts 1-3 unused `%jk.*` i64 instructions into every basic block |
 
-    // --- Future randomizing / obfuscation passes are added here. ---
-    mpm.addPass(jocky::RandomizedIRTransformPass(perBuildSeed()));
+`junk` is the simplest pass and mostly exists to prove the seam end to end: its
+output is dead SSA, so `--emit-llvm` shows it but the `-O0` backend drops it
+before the object file (an obfuscated binary is currently byte-identical to a
+plain one). Passes that change code the backend must keep - block splitting,
+control-flow flattening, call indirection - come next.
 
-    mpm.run(module, mam);
+## Adding a pass
 
 A new-pass-manager pass is a small struct with a
-`PreservedAnalyses run(Module&, ModuleAnalysisManager&)` method. Keep it in
-`src/codegen/`, add it to the source list in `src/CMakeLists.txt`, and give it a
-frontend test that checks the IR before and after.
+`PreservedAnalyses run(Module&, ModuleAnalysisManager&)` method
+(`llvm::PassInfoMixin` gives you the boilerplate). To add one:
 
-The driver already passes the `TargetMachine` (when it has one) into
+1. Declare it in `include/jocky/codegen/Obfuscation.h` and implement it in
+   `src/codegen/Obfuscation.cpp` (already in the `src/CMakeLists.txt` source
+   list).
+2. Add its name to `kKnownPasses` and to the dispatch at the bottom of
+   `addObfuscationPasses()`.
+3. Add a `test/frontend/obfuscate_<name>.jk` that checks the IR with and without
+   the pass, and asserts a fixed `--obf-seed` is reproducible.
+
+The driver passes the `TargetMachine` (when it has one) into
 `runTransformPipeline`, so target-aware passes have what they need.

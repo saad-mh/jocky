@@ -181,10 +181,17 @@ int runBuild(const Options &options) {
     const codegen::OptLevel opt =
         options.optimize ? codegen::OptLevel::O1 : codegen::OptLevel::O0;
 
+    codegen::ObfuscationOptions obf;
+    obf.enabled = options.obfuscate;
+    obf.passes = options.obfuscatePasses;
+    obf.seed = options.obfSeed;
+    obf.verbose = options.verbose;
+
     if (options.emitLlvm) {
-        // Print pre-transform IR unless the user also asked for optimization.
-        if (options.optimize)
-            codegen::runTransformPipeline(*module, /*machine=*/nullptr, opt);
+        // Print pre-transform IR unless the user asked for optimization or
+        // obfuscation - either of which is a transform they want to see.
+        if (options.optimize || obf.enabled)
+            codegen::runTransformPipeline(*module, /*machine=*/nullptr, opt, obf);
         module->print(llvm::outs(), nullptr);
         return 0;
     }
@@ -199,7 +206,7 @@ int runBuild(const Options &options) {
         return 70;
     }
 
-    codegen::runTransformPipeline(*module, machine.get(), opt);
+    codegen::runTransformPipeline(*module, machine.get(), opt, obf);
 
     if (options.emitObj) {
         const std::string objectPath = deriveOutputPath(options, ".obj");

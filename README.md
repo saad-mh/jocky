@@ -42,9 +42,13 @@ once (it provisions a vendored LLVM 18 SDK under `.vendor/`), then
 ```powershell
 .\build\bin\jocky.exe build <file>.jk -o <file>.exe   # compile and link
 .\build\bin\jocky.exe build --emit-llvm <file>.jk     # print the LLVM IR
+.\build\bin\jocky.exe build --obfuscate <file>.jk -o <file>.exe   # + obfuscation passes
 .\build\bin\jocky.exe lex   --dump-tokens <file>.jk   # print the token stream
 .\build\bin\jocky.exe parse --dump-ast    <file>.jk   # print the syntax tree
 ```
+
+`--obfuscate` (add `--obf-seed <n>` for a reproducible build) runs JOCKY's own
+IR transform passes; see [docs/codegen-and-passes.md](docs/codegen-and-passes.md).
 
 ## Tests
 

@@ -1,0 +1,23 @@
+// Exercises the --obfuscate seam and the junk-insertion pass:
+//   * with --obfuscate=junk, every user function gains unused %jk.* arithmetic;
+//   * without it, none appears;
+//   * a fixed --obf-seed makes the output byte-for-byte reproducible.
+
+// RUN: %jocky build --emit-llvm --obfuscate=junk --obf-seed 1 "%s" | %FileCheck "%s"
+// RUN: %jocky build --emit-llvm "%s" | %FileCheck --check-prefix=CLEAN "%s"
+// RUN: %jocky build --emit-llvm --obfuscate --obf-seed 42 "%s" > "%t.1.ll"
+// RUN: %jocky build --emit-llvm --obfuscate --obf-seed 42 "%s" > "%t.2.ll"
+// RUN: diff "%t.1.ll" "%t.2.ll"
+
+func add(a, b) {
+    return a + b;
+}
+
+print(add(2, 40));
+
+// CHECK-LABEL: define i64 @add(i64 %a, i64 %b)
+// CHECK:         %jk.
+// CHECK-LABEL: define i64 @main()
+// CHECK:         %jk.
+
+// CLEAN-NOT: %jk.

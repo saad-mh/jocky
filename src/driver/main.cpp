@@ -8,6 +8,7 @@
 #include "jocky/driver/Driver.h"
 #include "jocky/driver/Options.h"
 
+#include <llvm/ADT/StringRef.h>           // llvm::StringRef::getAsInteger
 #include <llvm/Config/llvm-config.h>      // LLVM_VERSION_STRING
 #include <llvm/Support/Path.h>            // llvm::sys::path::extension
 #include <llvm/Support/raw_ostream.h>
@@ -31,6 +32,7 @@ const char *const kUsage =
     "\n"
     "usage:\n"
     "  jocky build <in.jk> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
+    "                      [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
     "                      [--keep-temps] [--no-verify] [-v]\n"
     "  jocky lex   --dump-tokens <in.jk>\n"
     "  jocky parse --dump-ast    <in.jk>\n"
@@ -101,6 +103,23 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
             opts.emitLlvm = true;
         } else if (a == "--emit-obj") {
             opts.emitObj = true;
+        } else if (a == "--obfuscate") {
+            opts.obfuscate = true;
+        } else if (a.rfind("--obfuscate=", 0) == 0) {
+            opts.obfuscate = true;
+            opts.obfuscatePasses = std::string(a.substr(sizeof("--obfuscate=") - 1));
+        } else if (a == "--obf-seed") {
+            if (i + 1 >= args.size()) {
+                llvm::errs() << "jocky: --obf-seed needs a value\n";
+                return 2;
+            }
+            const std::string_view value = args[++i];
+            if (llvm::StringRef(value.data(), value.size())
+                    .getAsInteger(0, opts.obfSeed)) {
+                llvm::errs() << "jocky: --obf-seed value must be an integer (got '"
+                             << value << "')\n";
+                return 2;
+            }
         } else if (a == "--keep-temps") {
             opts.keepTemps = true;
         } else if (a == "--no-verify") {
