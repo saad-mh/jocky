@@ -32,7 +32,9 @@ public:
     void module(const Module &m) {
         line("(module");
         indent_ += 1;
+        for (const std::string &lib : m.linkLibs) line("(link \"" + lib + "\")");
         for (const StructDecl *s : m.structs) structDecl(*s);
+        for (const ExternDecl *e : m.externs) externDecl(*e);
         for (const FunctionDecl *fn : m.functions) function(*fn);
         if (!m.topLevelStatements.empty()) {
             line("(toplevel");
@@ -53,6 +55,19 @@ private:
             head += s.fields[i].name + ":" + typeName(s.fields[i].typeAnnotation);
         }
         line(head + "))");
+    }
+
+    void externDecl(const ExternDecl &e) {
+        std::string head = "(extern " + e.name + " (";
+        for (std::size_t i = 0; i < e.params.size(); ++i) {
+            if (i) head += " ";
+            if (e.params[i].isOut) head += "out ";
+            head += e.params[i].name + ":" + typeName(e.params[i].typeAnnotation);
+        }
+        if (e.isVarArg) head += e.params.empty() ? "..." : " ...";
+        head += ")";
+        if (e.returnType) head += " -> " + typeName(e.returnType);
+        line(head + ")");
     }
 
     void function(const FunctionDecl &fn) {

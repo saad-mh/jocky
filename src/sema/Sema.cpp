@@ -45,6 +45,8 @@ using ast::Type;
 struct FnSig {
     llvm::SmallVector<Type, 4> params;
     Type ret;
+    bool isExtern = false;
+    bool isVarArg = false;
 };
 
 class Checker {
@@ -55,6 +57,7 @@ public:
     bool run() {
         for (ast::StructDecl *s : module_.structs) registerStruct(*s);
         for (ast::StructDecl *s : module_.structs) layoutStruct(*s);
+        for (ast::ExternDecl *e : module_.externs) declareExtern(*e);
         for (ast::FunctionDecl *fn : module_.functions) declareFunction(*fn);
         for (ast::FunctionDecl *fn : module_.functions) checkFunctionBody(*fn);
         checkImplicitMain();
@@ -405,6 +408,46 @@ private:
             fn.returnType ? resolveType(fn.returnType) : Type::intTy();
         sig.ret = fn.resolvedReturn;
         functions_[fn.name] = std::move(sig);
+    }
+
+    void declareExtern(ast::ExternDecl &e) {
+        if (functions_.count(e.name)) {
+            err(e.loc, llvm::Twine("'") + e.name + "' is declared more than once");
+            return;
+        }
+        FnSig sig;
+        sig.isExtern = true;
+        sig.isVarArg = e.isVarArg;
+        for (ast::Param &p : e.params) {
+            if (!p.typeAnnotation) {
+                err(p.loc,
+                    llvm::Twine("parameter '") + p.name + "' needs a type");
+                p.type = Type::error();
+            } else {
+                p.type = resolveType(p.typeAnnotation);
+                if (p.type.isVoid()) {
+                    err(p.typeAnnotation->loc,
+                        "an extern parameter cannot have type 'void'");
+                    p.type = Type::error();
+                }
+                if (p.type.isStruct()) {
+                    err(p.typeAnnotation->loc,
+                        llvm::Twine("pass a struct to an extern by pointer "
+                                    "('ptr<") +
+                            p.type.name() + ">'), not by value");
+                    p.type = Type::error();
+                }
+            }
+            sig.params.push_back(p.type);
+        }
+        e.resolvedReturn =
+            e.returnType ? resolveType(e.returnType) : Type::intTy();
+        if (e.resolvedReturn.isStruct()) {
+            err(e.loc, "an extern cannot return a struct by value");
+            e.resolvedReturn = Type::error();
+        }
+        sig.ret = e.resolvedReturn;
+        functions_[e.name] = std::move(sig);
     }
 
     // pass 2: bodies
@@ -982,8 +1025,12 @@ private:
         }
 
         const FnSig &sig = it->second;
-        if (sig.params.size() != c.args.size()) {
+        const bool countOk = sig.isVarArg
+                                 ? c.args.size() >= sig.params.size()
+                                 : c.args.size() == sig.params.size();
+        if (!countOk) {
             err(c.loc, llvm::Twine("function '") + c.callee + "' expects " +
+                           (sig.isVarArg ? "at least " : "") +
                            llvm::Twine(sig.params.size()) + " argument(s) but " +
                            llvm::Twine(c.args.size()) + " were given");
             for (ast::Expr *a : c.args) checkExpr(*a);
@@ -992,6 +1039,7 @@ private:
 
         for (std::size_t i = 0; i < c.args.size(); ++i) {
             const Type at = checkExpr(*c.args[i]);
+            if (i >= sig.params.size()) continue;  // a varargs `...` argument
             const Type pt = sig.params[i];
             if (!at.isError() && !pt.isError() && !coerce(c.args[i], pt))
                 err(c.args[i]->loc,

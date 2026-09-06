@@ -54,6 +54,7 @@ enum class NodeKind {
     TypeExpr,
     // Top level.
     StructDecl,
+    ExternDecl,
     FunctionDecl,
     Module,
 };
@@ -346,6 +347,20 @@ struct Param {
     SourceLocation loc;
     TypeExpr *typeAnnotation = nullptr;  // `p: T`
     Type type;                           // resolved by sema
+    bool isOut = false;                  // the `out` marker (extern params only)
+};
+
+// `extern "C" name(params) -> ret;` - a C function implemented elsewhere and
+// resolved at link time. `...` at the end of the parameter list makes it
+// varargs. No body.
+struct ExternDecl : Node {
+    std::string name;
+    std::vector<Param> params;
+    bool isVarArg = false;
+    TypeExpr *returnType = nullptr;  // null means `-> int`
+    Type resolvedReturn;            // resolved by sema
+    ExternDecl(SourceLocation l, std::string n)
+        : Node(NodeKind::ExternDecl, l), name(std::move(n)) {}
 };
 
 // `struct Name { field: T, ... }` - fields in declared order, C natural
@@ -375,7 +390,9 @@ struct FunctionDecl : Node {
 
 struct Module : Node {
     std::vector<StructDecl *> structs;
+    std::vector<ExternDecl *> externs;
     std::vector<FunctionDecl *> functions;
+    std::vector<std::string> linkLibs;  // `link "name";` pragmas
     std::vector<Stmt *> topLevelStatements;  // run as the body of an implicit main
 
     // Owns every node above. See the file header.

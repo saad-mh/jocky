@@ -34,6 +34,7 @@ public:
 private:
     // --- grammar rules ---
     ast::StructDecl *parseStructDecl();
+    ast::ExternDecl *parseExternDecl();
     ast::FunctionDecl *parseFunctionDecl();
     ast::TypeExpr *parseType();
     ast::Block *parseBlock();

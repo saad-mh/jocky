@@ -32,6 +32,7 @@ enum class TokenKind {
     KwWhile,
     KwReturn,
     KwStruct,
+    KwExtern,
     KwAs,     // the `expr as Type` cast operator
     KwTrue,
     KwFalse,

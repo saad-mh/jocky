@@ -84,9 +84,24 @@ std::unique_ptr<ast::Module> Parser::parseModule() {
     module_ = std::make_unique<ast::Module>();
 
     while (!atEnd() && !tooManyErrors()) {
+        // `link "name";` pragma - a contextual keyword at top level only.
+        if (check(TokenKind::Identifier) && current().spelling == "link" &&
+            peek(1).kind == TokenKind::StringLiteral) {
+            advance();  // 'link'
+            module_->linkLibs.push_back(current().stringValue);
+            advance();  // the string
+            if (!expect(TokenKind::Semicolon, "';' after the link pragma"))
+                synchronize();
+            continue;
+        }
         if (check(TokenKind::KwStruct)) {
             if (ast::StructDecl *s = parseStructDecl())
                 module_->structs.push_back(s);
+            else
+                synchronize();
+        } else if (check(TokenKind::KwExtern)) {
+            if (ast::ExternDecl *e = parseExternDecl())
+                module_->externs.push_back(e);
             else
                 synchronize();
         } else if (check(TokenKind::KwFunc)) {
@@ -136,6 +151,69 @@ ast::StructDecl *Parser::parseStructDecl() {
         if (!match(TokenKind::Comma)) break;
     }
     if (!expect(TokenKind::RBrace, "'}' to close the struct body")) return nullptr;
+    return decl;
+}
+
+// `extern "C" name(out? p: type, ..., ...) -> type;` - no body.
+ast::ExternDecl *Parser::parseExternDecl() {
+    const SourceLocation loc = current().location;
+    advance();  // 'extern'
+
+    if (!check(TokenKind::StringLiteral) || current().stringValue != "C") {
+        diags_.error(current().location,
+                     "expected \"C\" after 'extern' (the only calling "
+                     "convention supported)");
+        return nullptr;
+    }
+    advance();  // "C"
+
+    if (!check(TokenKind::Identifier)) {
+        diags_.error(current().location, "expected a function name");
+        return nullptr;
+    }
+    auto *decl = make<ast::ExternDecl>(loc, current().spelling.str());
+    advance();
+
+    if (!expect(TokenKind::LParen, "'(' after the function name")) return nullptr;
+    if (!check(TokenKind::RParen)) {
+        for (;;) {
+            if (check(TokenKind::Dot) && peek(1).kind == TokenKind::Dot &&
+                peek(2).kind == TokenKind::Dot) {
+                advance();
+                advance();
+                advance();
+                decl->isVarArg = true;
+                break;
+            }
+            ast::Param p;
+            if (check(TokenKind::Identifier) && current().spelling == "out") {
+                p.isOut = true;
+                advance();
+            }
+            if (!check(TokenKind::Identifier)) {
+                diags_.error(current().location, "expected a parameter name");
+                return nullptr;
+            }
+            p.name = current().spelling.str();
+            p.loc = current().location;
+            advance();
+            if (!expect(TokenKind::Colon, "':' and a type after the parameter "
+                                          "name"))
+                return nullptr;
+            p.typeAnnotation = parseType();
+            if (!p.typeAnnotation) return nullptr;
+            decl->params.push_back(std::move(p));
+            if (!match(TokenKind::Comma)) break;
+        }
+    }
+    if (!expect(TokenKind::RParen, "')' after the parameter list")) return nullptr;
+
+    if (match(TokenKind::Arrow)) {
+        decl->returnType = parseType();
+        if (!decl->returnType) return nullptr;
+    }
+    if (!expect(TokenKind::Semicolon, "';' after the extern declaration"))
+        return nullptr;
     return decl;
 }
 

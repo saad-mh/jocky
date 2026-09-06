@@ -41,6 +41,7 @@ llvm::StringRef tokenKindName(TokenKind kind) {
     case TokenKind::KwWhile: return "KwWhile";
     case TokenKind::KwReturn: return "KwReturn";
     case TokenKind::KwStruct: return "KwStruct";
+    case TokenKind::KwExtern: return "KwExtern";
     case TokenKind::KwAs: return "KwAs";
     case TokenKind::KwTrue: return "KwTrue";
     case TokenKind::KwFalse: return "KwFalse";
@@ -484,6 +485,7 @@ Token Lexer::lexIdentifierOrKeyword() {
                  .Case("while", TokenKind::KwWhile)
                  .Case("return", TokenKind::KwReturn)
                  .Case("struct", TokenKind::KwStruct)
+                 .Case("extern", TokenKind::KwExtern)
                  .Case("as", TokenKind::KwAs)
                  .Case("true", TokenKind::KwTrue)
                  .Case("false", TokenKind::KwFalse)

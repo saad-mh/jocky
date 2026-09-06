@@ -130,6 +130,7 @@ void CodeGen::error(SourceLocation loc, const llvm::Twine &message) {
 
 std::unique_ptr<llvm::Module> CodeGen::lowerModule(const ast::Module &program) {
     // Pass 1: declare every function so calls resolve no matter the order.
+    for (const ast::ExternDecl *e : program.externs) declareExtern(*e);
     for (const ast::FunctionDecl *fn : program.functions) declareFunction(*fn);
     declareImplicitMain();
 
@@ -138,6 +139,25 @@ std::unique_ptr<llvm::Module> CodeGen::lowerModule(const ast::Module &program) {
     lowerImplicitMainBody(program);
 
     return std::move(module_);
+}
+
+// At the C ABI boundary a JOCKY `bool` is a 4-byte int (Win32 `BOOL`); every
+// other type maps as usual.
+llvm::Type *CodeGen::externLlvmType(ast::Type t) {
+    if (t.isBool()) return llvm::Type::getInt32Ty(ctx_);
+    return llvmType(t);
+}
+
+void CodeGen::declareExtern(const ast::ExternDecl &e) {
+    llvm::SmallVector<llvm::Type *, 8> paramTypes;
+    for (const ast::Param &p : e.params)
+        paramTypes.push_back(externLlvmType(p.type));
+    auto *fnTy = llvm::FunctionType::get(externLlvmType(e.resolvedReturn),
+                                         paramTypes, e.isVarArg);
+    auto *f = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
+                                     e.name, module_.get());
+    functions_[e.name] = f;
+    externNames_.insert(e.name);
 }
 
 void CodeGen::declareFunction(const ast::FunctionDecl &fn) {
