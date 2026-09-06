@@ -37,6 +37,9 @@ enum class NodeKind {
     SliceExpr,           // base[lo:hi]
     MemberExpr,          // base.member  (only `.len` for now)
     ArrayToSliceExpr,    // inserted by sema where a T[N] decays to a T[]
+    NullLiteralExpr,     // null
+    AddrOfExpr,          // &lvalue
+    DerefExpr,           // *ptr
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -170,10 +173,10 @@ struct CallExpr : Expr {
 // `var` (`var x: T = ...`). A bare name (`int`, `u32`), a fixed array
 // (`char[4096]`), or a slice (`char[]`). Sema resolves it to an `ast::Type`.
 struct TypeExpr : Node {
-    enum class Form { Name, Array, Slice };
+    enum class Form { Name, Array, Slice, Pointer };
     Form form = Form::Name;
-    std::string name;             // Form::Name
-    TypeExpr *element = nullptr;  // Form::Array / Form::Slice: the element type
+    std::string name;             // Form::Name  (`rawptr` is a name)
+    TypeExpr *element = nullptr;  // Array / Slice element, or Pointer pointee
     Expr *sizeExpr = nullptr;     // Form::Array: a constant-integer expression
 
     TypeExpr(SourceLocation l, std::string n)
@@ -241,6 +244,26 @@ struct ArrayToSliceExpr : Expr {
     Expr *array;
     ArrayToSliceExpr(SourceLocation l, Expr *a)
         : Expr(NodeKind::ArrayToSliceExpr, l), array(a) {}
+};
+
+// `null` - the null pointer. Types as `rawptr` and coerces to any pointer type.
+struct NullLiteralExpr : Expr {
+    explicit NullLiteralExpr(SourceLocation l)
+        : Expr(NodeKind::NullLiteralExpr, l) {}
+};
+
+// `&lvalue` - a pointer to a variable, array element, or (later) struct field.
+struct AddrOfExpr : Expr {
+    Expr *operand;
+    AddrOfExpr(SourceLocation l, Expr *e)
+        : Expr(NodeKind::AddrOfExpr, l), operand(e) {}
+};
+
+// `*ptr` - reads through a pointer; also an lvalue (`*p = v`).
+struct DerefExpr : Expr {
+    Expr *operand;
+    DerefExpr(SourceLocation l, Expr *e)
+        : Expr(NodeKind::DerefExpr, l), operand(e) {}
 };
 
 // Statements

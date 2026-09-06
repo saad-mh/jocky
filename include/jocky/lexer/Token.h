@@ -34,6 +34,7 @@ enum class TokenKind {
     KwAs,     // the `expr as Type` cast operator
     KwTrue,
     KwFalse,
+    KwNull,   // the null-pointer literal
 
     // punctuations
     LParen,     // (

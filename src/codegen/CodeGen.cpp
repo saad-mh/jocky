@@ -82,6 +82,8 @@ llvm::Type *CodeGen::llvmType(ast::Type t) {
         return llvm::ArrayType::get(llvmType(t.elem()), t.length);
     case ast::TypeKind::Slice:
         return sliceTy();
+    case ast::TypeKind::Pointer:
+        return ptrTy();  // opaque - `ptr<T>` and `rawptr` are the same in IR
     case ast::TypeKind::Error:
         return i64Ty();  // unreachable post-sema; keeps codegen total
     }
@@ -411,13 +413,24 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
         return lowerArrayToSlice(
             static_cast<const ast::ArrayToSliceExpr &>(expr));
 
+    case ast::NodeKind::NullLiteralExpr:
+        return llvm::ConstantPointerNull::get(ptrTy());
+    case ast::NodeKind::AddrOfExpr:
+        return lowerAddr(*static_cast<const ast::AddrOfExpr &>(expr).operand);
+    case ast::NodeKind::DerefExpr: {
+        llvm::Value *addr = lowerAddr(expr);  // the pointer value is the address
+        if (!addr) return nullptr;
+        return builder_.CreateLoad(llvmType(expr.type), addr, "deref");
+    }
+
     default:
         error(expr.loc, "internal: unexpected expression kind in codegen");
         return nullptr;
     }
 }
 
-// The address of an lvalue: a variable's slot, or a computed element address.
+// The address of an lvalue: a variable's slot, a computed element address, or
+// (for `*p`) the pointer value itself.
 llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
     if (e.kind == ast::NodeKind::VarRefExpr) {
         Local *local = lookupLocal(static_cast<const ast::VarRefExpr &>(e).name);
@@ -437,6 +450,8 @@ llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
         return builder_.CreateGEP(llvmType(seq.elem), seq.basePtr, idx,
                                   "elt.addr");
     }
+    if (e.kind == ast::NodeKind::DerefExpr)
+        return lowerExpr(*static_cast<const ast::DerefExpr &>(e).operand);
     error(e.loc, "internal: expression is not an lvalue in codegen");
     return nullptr;
 }
@@ -543,6 +558,9 @@ llvm::Value *CodeGen::lowerConversion(const ast::Expr &expr) {
 
 llvm::Value *CodeGen::emitConvert(llvm::Value *v, ast::Type from, ast::Type to) {
     if (from == to) return v;
+    // All pointers share one opaque LLVM type, so a pointer<->pointer cast is a
+    // no-op at the IR level (it only changes the JOCKY type).
+    if (from.isPointer() && to.isPointer()) return v;
     llvm::Type *dst = llvmType(to);
 
     if (to.isBool()) {

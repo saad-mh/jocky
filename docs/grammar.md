@@ -31,7 +31,7 @@ milestone plan.
                (`int`, `char`, `bool`, `double`, `float`, `i8`..`i64`,
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
-    keywords   func  var  if  else  while  return  as  true  false
+    keywords   func  var  if  else  while  return  as  true  false  null
     symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
                == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
@@ -48,10 +48,12 @@ ordinary identifier that codegen treats as a builtin.
     param        := IDENT (':' type)?          // the annotation is required
                                                // semantically; a missing one is
                                                // a sema error, not a parse error
-    type         := IDENT ('[' expr ']' | '[' ']')*
-                                               // IDENT is a type name; `[expr]`
-                                               // is a fixed array (expr must fold
-                                               // to a constant), `[]` a slice
+    type         := ('ptr' '<' type '>' | IDENT) ('[' expr ']' | '[' ']')*
+                                               // IDENT is a type name (incl.
+                                               // `rawptr`); `ptr<T>` is a typed
+                                               // pointer; `[expr]` a fixed array
+                                               // (expr folds to a constant),
+                                               // `[]` a slice
 
     block        := '{' statement* '}'
 
@@ -84,14 +86,16 @@ ordinary identifier that codegen treats as a builtin.
     additive       := multiplicative (('+' | '-') multiplicative)*
     multiplicative := cast (('*' | '/' | '%') cast)*
     cast           := unary ('as' type)*
-    unary          := ('-' | '~') unary | postfix
+    unary          := ('-' | '~' | '&' | '*') unary | postfix
+                                               // prefix `&` is address-of,
+                                               // prefix `*` is dereference
     postfix        := primary ('[' expr ']' | '[' expr? ':' expr? ']' | '.' IDENT)*
                                                // element index, sub-slice, `.len`
     primary        := INT
                     | FLOAT
                     | CHAR
                     | STRING
-                    | 'true' | 'false'
+                    | 'true' | 'false' | 'null'
                     | '[' (expr (',' expr)*)? ']'   // an array literal
                     | IDENT
                     | IDENT '(' argList? ')'    // a call
@@ -100,7 +104,7 @@ ordinary identifier that codegen treats as a builtin.
 
 Binary operators are left-associative. Precedence, lowest to highest:
 `|`  <  `^`  <  `&`  <  `== !=`  <  `< <= > >=`  <  `<< >>`  <  `+ -`  <
-`* / %`  <  `as`  <  unary `- ~`  <  postfix `[]` / `.`.
+`* / %`  <  `as`  <  unary `- ~ & *`  <  postfix `[]` / `.`.
 
 `<<` and `>>` are never lexed as one token - they are two adjacent `<` / `>` -
 so a nested `ptr<ptr<int>>` closes without a special rule.
@@ -124,6 +128,11 @@ so a nested `ptr<ptr<int>>` closes without a special rule.
   when passed or assigned where a slice is wanted; `arr[a:b]` makes a sub-slice
   (either bound may be omitted). `s.len` is the element count. A slice variable
   must be initialized.
+- `ptr<T>` - a typed pointer. `&lvalue` makes one; `*p` reads or writes through
+  it (`*p = v`). `null` is the null pointer and fits any pointer type. Pointers
+  compare with `== !=` and, unsigned, with `< <= > >=`.
+- `rawptr` - an untyped byte pointer (C `void*`). It cannot be dereferenced;
+  cast it to a `ptr<T>` first. `rawptr` and `ptr<T>` convert only with `as`.
 
 A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
 like any other array.

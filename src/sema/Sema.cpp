@@ -102,6 +102,15 @@ private:
             }
             return Type::array(elem, static_cast<unsigned>(n));
         }
+        case ast::TypeExpr::Form::Pointer: {
+            Type pointee = resolveType(te->element);
+            if (pointee.isError()) return Type::error();
+            if (pointee.isVoid()) {
+                err(te->loc, "use 'rawptr', not 'ptr<void>'");
+                return Type::error();
+            }
+            return Type::pointer(pointee);
+        }
         }
 
         const Type t = llvm::StringSwitch<Type>(te->name)
@@ -119,6 +128,7 @@ private:
                            .Case("u64", Type::integer(64, false))
                            .Case("float", Type::f32())
                            .Case("double", Type::f64())
+                           .Case("rawptr", Type::rawPtr())
                            .Default(Type::error());
         if (t.isError())
             err(te->loc, llvm::Twine("unknown type '") + te->name + "'");
@@ -175,9 +185,12 @@ private:
         return (t.isArray() || t.isSlice()) && t.elem() == Type::charTy();
     }
 
-    // What `expr as T` accepts: any scalar to any other scalar.
+    // What `expr as T` accepts: any scalar to any other scalar, and any pointer
+    // to any other pointer (`rawptr` <-> `ptr<T>`, `ptr<T>` <-> `ptr<U>`).
+    // Pointer <-> integer casts are added in L1.4.
     static bool explicitlyConvertible(Type from, Type to) {
         if (from.isError() || to.isError()) return true;
+        if (from.isPointer() && to.isPointer()) return true;
         const bool fromScalar = from.isNumeric() || from.isBool();
         const bool toScalar = to.isNumeric() || to.isBool();
         return fromScalar && toScalar;
@@ -235,6 +248,12 @@ private:
         if (slot->type.isError() || to.isError() || slot->type == to)
             return true;
         if (adaptIntLiteral(*slot, to)) return true;  // literal becomes type `to`
+
+        // `null` takes on whatever pointer type its context wants.
+        if (slot->kind == ast::NodeKind::NullLiteralExpr && to.isPointer()) {
+            slot->type = to;
+            return true;
+        }
 
         // A `T[N]` decays to a `T[]` (same element type).
         if (slot->type.isArray() && to.isSlice() &&
@@ -396,10 +415,12 @@ private:
                     " (add an explicit `as " + targetT.name() + "`)");
     }
 
-    // A storable location: a variable, or an element of an array/slice.
+    // A storable location: a variable, an array/slice element, or the target of
+    // a dereference (`*p = v`).
     static bool isLValue(const ast::Expr &e) {
         return e.kind == ast::NodeKind::VarRefExpr ||
-               e.kind == ast::NodeKind::IndexExpr;
+               e.kind == ast::NodeKind::IndexExpr ||
+               e.kind == ast::NodeKind::DerefExpr;
     }
 
     void checkReturn(ast::ReturnStmt &r) {
@@ -505,6 +526,12 @@ private:
             return checkSlice(static_cast<ast::SliceExpr &>(e));
         case ast::NodeKind::MemberExpr:
             return checkMember(static_cast<ast::MemberExpr &>(e));
+        case ast::NodeKind::NullLiteralExpr:
+            return Type::rawPtr();  // adapts to any pointer type via coerce()
+        case ast::NodeKind::AddrOfExpr:
+            return checkAddrOf(static_cast<ast::AddrOfExpr &>(e));
+        case ast::NodeKind::DerefExpr:
+            return checkDeref(static_cast<ast::DerefExpr &>(e));
         default:
             err(e.loc, "internal: unexpected expression kind in sema");
             return Type::error();
@@ -595,6 +622,32 @@ private:
         return Type::intTy();
     }
 
+    Type checkAddrOf(ast::AddrOfExpr &e) {
+        const Type ot = checkExpr(*e.operand);
+        if (ot.isError()) return Type::error();
+        if (!isLValue(*e.operand)) {
+            err(e.loc, "'&' needs an addressable value (a variable, an array "
+                       "element, or *p)");
+            return Type::error();
+        }
+        return Type::pointer(ot);
+    }
+
+    Type checkDeref(ast::DerefExpr &e) {
+        const Type ot = checkExpr(*e.operand);
+        if (ot.isError()) return Type::error();
+        if (!ot.isPointer()) {
+            err(e.loc, llvm::Twine("cannot dereference a value of type ") +
+                           ot.name());
+            return Type::error();
+        }
+        if (ot.isRawPointer()) {
+            err(e.loc, "cannot dereference a rawptr (cast it to a ptr<T> first)");
+            return Type::error();
+        }
+        return ot.pointee();
+    }
+
     static bool isBitwise(ast::BinaryOp op) {
         return op == ast::BinaryOp::BitAnd || op == ast::BinaryOp::BitOr ||
                op == ast::BinaryOp::BitXor;
@@ -603,10 +656,44 @@ private:
         return op == ast::BinaryOp::Shl || op == ast::BinaryOp::Shr;
     }
 
+    // Pointer operands: only comparisons for now. `==` / `!=` accept `null` on
+    // either side; ordering needs the same pointer type. (Pointer arithmetic
+    // `p + n` / `p - q` arrives in L1.4.)
+    Type checkPointerBinary(ast::BinaryExpr &b, Type lt, Type rt) {
+        if (b.lhs->kind == ast::NodeKind::NullLiteralExpr && rt.isPointer()) {
+            b.lhs->type = rt;
+            lt = rt;
+        }
+        if (b.rhs->kind == ast::NodeKind::NullLiteralExpr && lt.isPointer()) {
+            b.rhs->type = lt;
+            rt = lt;
+        }
+        if (!lt.isPointer() || !rt.isPointer()) {
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' cannot combine " + lt.name() + " and " + rt.name());
+            return Type::error();
+        }
+        if (!ast::isComparison(b.op)) {
+            err(b.loc, "pointers support only == != < <= > >= for now "
+                       "(pointer arithmetic is L1.4)");
+            return Type::error();
+        }
+        if (lt != rt) {
+            err(b.loc, llvm::Twine("comparing incompatible pointer types ") +
+                           lt.name() + " and " + rt.name() +
+                           " (add an explicit `as`)");
+            return Type::error();
+        }
+        return Type::boolTy();
+    }
+
     Type checkBinary(ast::BinaryExpr &b) {
         Type lt = checkExpr(*b.lhs);
         Type rt = checkExpr(*b.rhs);
         if (lt.isError() || rt.isError()) return Type::error();
+
+        if (lt.isPointer() || rt.isPointer())
+            return checkPointerBinary(b, lt, rt);
 
         // Shift: an integer value shifted by an integer count. The count keeps
         // its own type (codegen converts it to the value's type); result type is

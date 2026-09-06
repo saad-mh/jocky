@@ -43,6 +43,7 @@ llvm::StringRef tokenKindName(TokenKind kind) {
     case TokenKind::KwAs: return "KwAs";
     case TokenKind::KwTrue: return "KwTrue";
     case TokenKind::KwFalse: return "KwFalse";
+    case TokenKind::KwNull: return "KwNull";
     case TokenKind::LParen: return "LParen";
     case TokenKind::RParen: return "RParen";
     case TokenKind::LBrace: return "LBrace";
@@ -482,6 +483,7 @@ Token Lexer::lexIdentifierOrKeyword() {
                  .Case("as", TokenKind::KwAs)
                  .Case("true", TokenKind::KwTrue)
                  .Case("false", TokenKind::KwFalse)
+                 .Case("null", TokenKind::KwNull)
                  .Default(TokenKind::Identifier);
     return t;
 }

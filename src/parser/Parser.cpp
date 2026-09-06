@@ -149,9 +149,9 @@ ast::FunctionDecl *Parser::parseFunctionDecl() {
     return fn;
 }
 
-// A type in annotation position: a name (`int`, `u32`), optionally followed by
-// `[N]` (fixed array) and/or `[]` (slice), applied left to right. Sema resolves
-// the name and folds the size expression.
+// A type in annotation position: a name (`int`, `u32`, `rawptr`), the generic
+// `ptr<T>`, and any run of `[N]` (fixed array) / `[]` (slice) suffixes, applied
+// left to right. Sema resolves the name and folds the size expression.
 ast::TypeExpr *Parser::parseType() {
     if (!check(TokenKind::Identifier)) {
         diags_.error(current().location,
@@ -162,6 +162,17 @@ ast::TypeExpr *Parser::parseType() {
     const SourceLocation loc = current().location;
     ast::TypeExpr *ty = make<ast::TypeExpr>(loc, current().spelling.str());
     advance();
+
+    // `ptr<T>`. `>` is a single token here (JOCKY never lexes `>>`), so
+    // `ptr<ptr<int>>` closes naturally.
+    if (ty->name == "ptr" && check(TokenKind::Lt)) {
+        advance();  // '<'
+        ast::TypeExpr *pointee = parseType();
+        if (!pointee) return nullptr;
+        if (!expect(TokenKind::Gt, "'>' to close 'ptr<...>'")) return nullptr;
+        ty = make<ast::TypeExpr>(loc, ast::TypeExpr::Form::Pointer, pointee,
+                                 nullptr);
+    }
 
     while (check(TokenKind::LBracket)) {
         const SourceLocation bloc = current().location;
@@ -518,6 +529,22 @@ ast::Expr *Parser::parseUnary() {
         if (!operand) return nullptr;
         return make<ast::UnaryExpr>(loc, op, operand);
     }
+    // Prefix `&` (address-of) and `*` (dereference). In expression position
+    // these are unambiguous against the infix `&` / `*` operators.
+    if (check(TokenKind::Amp)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *operand = parseUnary();
+        if (!operand) return nullptr;
+        return make<ast::AddrOfExpr>(loc, operand);
+    }
+    if (check(TokenKind::Star)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *operand = parseUnary();
+        if (!operand) return nullptr;
+        return make<ast::DerefExpr>(loc, operand);
+    }
     return parsePostfix();
 }
 
@@ -610,6 +637,10 @@ ast::Expr *Parser::parsePrimary() {
     case TokenKind::KwFalse:
         advance();
         return make<ast::BoolLiteralExpr>(tok.location, false);
+
+    case TokenKind::KwNull:
+        advance();
+        return make<ast::NullLiteralExpr>(tok.location);
 
     case TokenKind::StringLiteral:
         advance();
