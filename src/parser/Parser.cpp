@@ -149,9 +149,9 @@ ast::FunctionDecl *Parser::parseFunctionDecl() {
     return fn;
 }
 
-// A type in annotation position: a name (`int`, `u32`), optionally followed by
-// `[N]` (fixed array) and/or `[]` (slice), applied left to right. Sema resolves
-// the name and folds the size expression.
+// A type in annotation position: a name (`int`, `u32`, `rawptr`), the generic
+// `ptr<T>`, and any run of `[N]` (fixed array) / `[]` (slice) suffixes, applied
+// left to right. Sema resolves the name and folds the size expression.
 ast::TypeExpr *Parser::parseType() {
     if (!check(TokenKind::Identifier)) {
         diags_.error(current().location,
@@ -162,6 +162,17 @@ ast::TypeExpr *Parser::parseType() {
     const SourceLocation loc = current().location;
     ast::TypeExpr *ty = make<ast::TypeExpr>(loc, current().spelling.str());
     advance();
+
+    // `ptr<T>`. `>` is a single token here (JOCKY never lexes `>>`), so
+    // `ptr<ptr<int>>` closes naturally.
+    if (ty->name == "ptr" && check(TokenKind::Lt)) {
+        advance();  // '<'
+        ast::TypeExpr *pointee = parseType();
+        if (!pointee) return nullptr;
+        if (!expect(TokenKind::Gt, "'>' to close 'ptr<...>'")) return nullptr;
+        ty = make<ast::TypeExpr>(loc, ast::TypeExpr::Form::Pointer, pointee,
+                                 nullptr);
+    }
 
     while (check(TokenKind::LBracket)) {
         const SourceLocation bloc = current().location;
@@ -330,9 +341,49 @@ ast::Stmt *Parser::parseReturn() {
     return make<ast::ReturnStmt>(loc, value);
 }
 
-// expressions (precedence climbing, l to h)
+// expressions (precedence climbing, l to h). Lowest to highest:
+//   |  ^  &  ==/!=  </<=/>/>=  <</>>  +/-  *//%  as  unary -/~  postfix []/.
 
-ast::Expr *Parser::parseExpr() { return parseEquality(); }
+ast::Expr *Parser::parseExpr() { return parseBitOr(); }
+
+ast::Expr *Parser::parseBitOr() {
+    ast::Expr *left = parseBitXor();
+    if (!left) return nullptr;
+    while (check(TokenKind::Pipe)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseBitXor();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitOr, left, right);
+    }
+    return left;
+}
+
+ast::Expr *Parser::parseBitXor() {
+    ast::Expr *left = parseBitAnd();
+    if (!left) return nullptr;
+    while (check(TokenKind::Caret)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseBitAnd();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitXor, left, right);
+    }
+    return left;
+}
+
+ast::Expr *Parser::parseBitAnd() {
+    ast::Expr *left = parseEquality();
+    if (!left) return nullptr;
+    while (check(TokenKind::Amp)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *right = parseEquality();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, ast::BinaryOp::BitAnd, left, right);
+    }
+    return left;
+}
 
 ast::Expr *Parser::parseEquality() {
     ast::Expr *left = parseRelational();
@@ -355,15 +406,17 @@ ast::Expr *Parser::parseEquality() {
 }
 
 ast::Expr *Parser::parseRelational() {
-    ast::Expr *left = parseAdditive();
+    ast::Expr *left = parseShift();
     if (!left) return nullptr;
     for (;;) {
+        // `<` / `>` here is relational only when it is *not* the first half of a
+        // `<<` / `>>` shift (two adjacent tokens).
         ast::BinaryOp op;
-        if (check(TokenKind::Lt)) {
+        if (check(TokenKind::Lt) && !twoAdjacent(TokenKind::Lt)) {
             op = ast::BinaryOp::Lt;
         } else if (check(TokenKind::LtEq)) {
             op = ast::BinaryOp::Le;
-        } else if (check(TokenKind::Gt)) {
+        } else if (check(TokenKind::Gt) && !twoAdjacent(TokenKind::Gt)) {
             op = ast::BinaryOp::Gt;
         } else if (check(TokenKind::GtEq)) {
             op = ast::BinaryOp::Ge;
@@ -372,6 +425,36 @@ ast::Expr *Parser::parseRelational() {
         }
         const SourceLocation loc = current().location;
         advance();
+        ast::Expr *right = parseShift();
+        if (!right) return nullptr;
+        left = make<ast::BinaryExpr>(loc, op, left, right);
+    }
+}
+
+// `<<` and `>>` are two adjacent `<` / `>` tokens (JOCKY never lexes them as
+// one, so `ptr<ptr<int>>` closes cleanly). "Adjacent" means no space between.
+bool Parser::twoAdjacent(TokenKind kind) const {
+    if (current().kind != kind || peek(1).kind != kind) return false;
+    const SourceLocation a = current().location;
+    const SourceLocation b = peek(1).location;
+    return a.line == b.line && a.column + 1 == b.column;
+}
+
+ast::Expr *Parser::parseShift() {
+    ast::Expr *left = parseAdditive();
+    if (!left) return nullptr;
+    for (;;) {
+        ast::BinaryOp op;
+        if (twoAdjacent(TokenKind::Lt)) {
+            op = ast::BinaryOp::Shl;
+        } else if (twoAdjacent(TokenKind::Gt)) {
+            op = ast::BinaryOp::Shr;
+        } else {
+            return left;
+        }
+        const SourceLocation loc = current().location;
+        advance();  // first < / >
+        advance();  // second < / >
         ast::Expr *right = parseAdditive();
         if (!right) return nullptr;
         left = make<ast::BinaryExpr>(loc, op, left, right);
@@ -437,12 +520,30 @@ ast::Expr *Parser::parseCast() {
 }
 
 ast::Expr *Parser::parseUnary() {
-    if (check(TokenKind::Minus)) {
+    if (check(TokenKind::Minus) || check(TokenKind::Tilde)) {
+        const ast::UnaryOp op = check(TokenKind::Tilde) ? ast::UnaryOp::BitNot
+                                                        : ast::UnaryOp::Neg;
         const SourceLocation loc = current().location;
         advance();
         ast::Expr *operand = parseUnary();
         if (!operand) return nullptr;
-        return make<ast::UnaryExpr>(loc, ast::UnaryOp::Neg, operand);
+        return make<ast::UnaryExpr>(loc, op, operand);
+    }
+    // Prefix `&` (address-of) and `*` (dereference). In expression position
+    // these are unambiguous against the infix `&` / `*` operators.
+    if (check(TokenKind::Amp)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *operand = parseUnary();
+        if (!operand) return nullptr;
+        return make<ast::AddrOfExpr>(loc, operand);
+    }
+    if (check(TokenKind::Star)) {
+        const SourceLocation loc = current().location;
+        advance();
+        ast::Expr *operand = parseUnary();
+        if (!operand) return nullptr;
+        return make<ast::DerefExpr>(loc, operand);
     }
     return parsePostfix();
 }
@@ -536,6 +637,34 @@ ast::Expr *Parser::parsePrimary() {
     case TokenKind::KwFalse:
         advance();
         return make<ast::BoolLiteralExpr>(tok.location, false);
+
+    case TokenKind::KwNull:
+        advance();
+        return make<ast::NullLiteralExpr>(tok.location);
+
+    case TokenKind::KwSizeof: {
+        const SourceLocation loc = tok.location;
+        advance();  // 'sizeof'
+        if (!expect(TokenKind::LParen, "'(' after 'sizeof'")) return nullptr;
+
+        auto *node = make<ast::SizeofExpr>(loc);
+        // Try to read a type; if that consumes exactly up to `)`, it was
+        // `sizeof(T)`. Otherwise rewind and read an expression.
+        const std::size_t savedPos = pos_;
+        const std::size_t savedDiag = diags_.mark();
+        ast::TypeExpr *asType = parseType();
+        if (asType && check(TokenKind::RParen)) {
+            node->typeArg = asType;
+        } else {
+            pos_ = savedPos;
+            diags_.rewind(savedDiag);
+            node->exprArg = parseExpr();
+            if (!node->exprArg) return nullptr;
+        }
+        if (!expect(TokenKind::RParen, "')' to close 'sizeof(...)'"))
+            return nullptr;
+        return node;
+    }
 
     case TokenKind::StringLiteral:
         advance();

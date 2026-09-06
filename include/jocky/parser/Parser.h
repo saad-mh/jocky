@@ -44,8 +44,12 @@ private:
     ast::Stmt *parseReturn();
 
     ast::Expr *parseExpr();
+    ast::Expr *parseBitOr();
+    ast::Expr *parseBitXor();
+    ast::Expr *parseBitAnd();
     ast::Expr *parseEquality();
     ast::Expr *parseRelational();
+    ast::Expr *parseShift();
     ast::Expr *parseAdditive();
     ast::Expr *parseMultiplicative();
     ast::Expr *parseCast();
@@ -57,6 +61,9 @@ private:
     const Token &peek(std::size_t ahead = 0) const;
     const Token &current() const { return peek(0); }
     bool check(TokenKind kind) const { return current().kind == kind; }
+    // True when the current and next token are both `kind` and touch (no space),
+    // i.e. they form `<<` or `>>`.
+    bool twoAdjacent(TokenKind kind) const;
     bool atEnd() const { return check(TokenKind::Eof); }
     const Token &advance();
     bool match(TokenKind kind);  // advance and return true if current kind matches

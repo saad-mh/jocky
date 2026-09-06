@@ -31,8 +31,10 @@ milestone plan.
                (`int`, `char`, `bool`, `double`, `float`, `i8`..`i64`,
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
-    keywords   func  var  if  else  while  return  as  true  false
-    symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  == !=  < <= > >=
+    keywords   func  var  if  else  while  return  as  true  false  null
+               sizeof
+    symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
+               == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
 `//` starts a comment that runs to the end of the line. Whitespace separates
 tokens and is otherwise ignored. `print` is **not** a keyword - it is an
@@ -47,10 +49,12 @@ ordinary identifier that codegen treats as a builtin.
     param        := IDENT (':' type)?          // the annotation is required
                                                // semantically; a missing one is
                                                // a sema error, not a parse error
-    type         := IDENT ('[' expr ']' | '[' ']')*
-                                               // IDENT is a type name; `[expr]`
-                                               // is a fixed array (expr must fold
-                                               // to a constant), `[]` a slice
+    type         := ('ptr' '<' type '>' | IDENT) ('[' expr ']' | '[' ']')*
+                                               // IDENT is a type name (incl.
+                                               // `rawptr`); `ptr<T>` is a typed
+                                               // pointer; `[expr]` a fixed array
+                                               // (expr folds to a constant),
+                                               // `[]` a slice
 
     block        := '{' statement* '}'
 
@@ -73,20 +77,27 @@ ordinary identifier that codegen treats as a builtin.
     whileStmt    := 'while' '(' expr ')' block
     returnStmt   := 'return' expr? ';'
 
-    expr           := equality
+    expr           := bitOr
+    bitOr          := bitXor ('|' bitXor)*
+    bitXor         := bitAnd ('^' bitAnd)*
+    bitAnd         := equality ('&' equality)*
     equality       := relational (('==' | '!=') relational)*
-    relational     := additive (('<' | '<=' | '>' | '>=') additive)*
+    relational     := shift (('<' | '<=' | '>' | '>=') shift)*
+    shift          := additive (('<<' | '>>') additive)*
     additive       := multiplicative (('+' | '-') multiplicative)*
     multiplicative := cast (('*' | '/' | '%') cast)*
     cast           := unary ('as' type)*
-    unary          := '-' unary | postfix
+    unary          := ('-' | '~' | '&' | '*') unary | postfix
+                                               // prefix `&` is address-of,
+                                               // prefix `*` is dereference
     postfix        := primary ('[' expr ']' | '[' expr? ':' expr? ']' | '.' IDENT)*
                                                // element index, sub-slice, `.len`
     primary        := INT
                     | FLOAT
                     | CHAR
                     | STRING
-                    | 'true' | 'false'
+                    | 'true' | 'false' | 'null'
+                    | 'sizeof' '(' (type | expr) ')'   // compile-time int
                     | '[' (expr (',' expr)*)? ']'   // an array literal
                     | IDENT
                     | IDENT '(' argList? ')'    // a call
@@ -94,8 +105,11 @@ ordinary identifier that codegen treats as a builtin.
     argList        := expr (',' expr)*
 
 Binary operators are left-associative. Precedence, lowest to highest:
-`== !=`  <  `< <= > >=`  <  `+ -`  <  `* / %`  <  `as`  <  unary `-`  <
-postfix `[]` / `.`.
+`|`  <  `^`  <  `&`  <  `== !=`  <  `< <= > >=`  <  `<< >>`  <  `+ -`  <
+`* / %`  <  `as`  <  unary `- ~ & *`  <  postfix `[]` / `.`.
+
+`<<` and `>>` are never lexed as one token - they are two adjacent `<` / `>` -
+so a nested `ptr<ptr<int>>` closes without a special rule.
 
 ## Semantics
 
@@ -116,6 +130,18 @@ postfix `[]` / `.`.
   when passed or assigned where a slice is wanted; `arr[a:b]` makes a sub-slice
   (either bound may be omitted). `s.len` is the element count. A slice variable
   must be initialized.
+- `ptr<T>` - a typed pointer. `&lvalue` makes one; `*p` reads or writes through
+  it (`*p = v`). `null` is the null pointer and fits any pointer type. Pointers
+  compare with `== !=` and, unsigned, with `< <= > >=`.
+- `rawptr` - an untyped byte pointer (C `void*`). It cannot be dereferenced;
+  cast it to a `ptr<T>` first. `rawptr` and `ptr<T>` convert only with `as`.
+
+Pointer arithmetic: `p + n` / `p - n` move a `ptr<T>` by `n * sizeof(T)` (by
+`n` bytes for a `rawptr`); `p - q` (same pointer type) is the element count
+between them. `addr as ptr<T>` and `p as u64` convert between a pointer and an
+integer address. `sizeof(T)` / `sizeof(expr)` is the C-layout byte size, a
+compile-time `int` (`sizeof(u32)` is 4, `sizeof(char[16])` is 16,
+`sizeof(ptr<T>)` is 8).
 
 A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
 like any other array.
@@ -123,6 +149,17 @@ like any other array.
 A bare integer literal has no fixed type: it takes whatever its context needs,
 as long as its value fits (so `var x: u8 = 200;` and `(0 as u64) - 1` are fine).
 A literal with a suffix, and every other expression, has one definite type.
+
+### Operators
+
+- Arithmetic `+ - * / %` and the bitwise `& | ^` follow the same operand rule:
+  both sides must be numbers (integers for `%` and the bitwise ops), a bare
+  literal adapts to the other side, and the result is their common type.
+- `~` needs an integer; `-` needs a number; each keeps the operand's type.
+- `<< >>` take an integer value and an integer count (of any width - the count
+  is brought to the value's type). The result is the value's type. `>>` is
+  arithmetic (sign-extending) for a signed value, logical for an unsigned one.
+- Comparisons `== != < <= > >=` produce `bool`.
 
 ### Conversions
 

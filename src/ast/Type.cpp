@@ -21,6 +21,8 @@ std::string Type::name() const {
         return element->name() + "[" + std::to_string(length) + "]";
     case TypeKind::Slice:
         return element->name() + "[]";
+    case TypeKind::Pointer:
+        return element->isVoid() ? "rawptr" : "ptr<" + element->name() + ">";
     }
     return "<error>";
 }

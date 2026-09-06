@@ -102,6 +102,15 @@ private:
             }
             return Type::array(elem, static_cast<unsigned>(n));
         }
+        case ast::TypeExpr::Form::Pointer: {
+            Type pointee = resolveType(te->element);
+            if (pointee.isError()) return Type::error();
+            if (pointee.isVoid()) {
+                err(te->loc, "use 'rawptr', not 'ptr<void>'");
+                return Type::error();
+            }
+            return Type::pointer(pointee);
+        }
         }
 
         const Type t = llvm::StringSwitch<Type>(te->name)
@@ -119,22 +128,31 @@ private:
                            .Case("u64", Type::integer(64, false))
                            .Case("float", Type::f32())
                            .Case("double", Type::f64())
+                           .Case("rawptr", Type::rawPtr())
                            .Default(Type::error());
         if (t.isError())
             err(te->loc, llvm::Twine("unknown type '") + te->name + "'");
         return t;
     }
 
-    // A minimal compile-time evaluator for an array length: integer literals
-    // and `+ - * / %` over them, plus parenthesised / cast forms. Enough for
-    // `char[4096]`, `int[N*2]`. Returns false if `e` is not foldable or is
-    // negative.
-    static bool constUint(const ast::Expr &e, std::uint64_t &out) {
+    // A minimal compile-time evaluator for an array length: integer literals,
+    // `+ - * / %` over them, `sizeof(T)`, plus parenthesised / cast forms.
+    // Enough for `char[4096]`, `int[N*2]`, `u8[sizeof(int)]`. Returns false if
+    // `e` is not foldable or is negative.
+    bool constUint(const ast::Expr &e, std::uint64_t &out) {
         switch (e.kind) {
         case ast::NodeKind::IntLiteralExpr: {
             const auto &n = static_cast<const ast::IntLiteralExpr &>(e);
             if (n.value < 0) return false;
             out = static_cast<std::uint64_t>(n.value);
+            return true;
+        }
+        case ast::NodeKind::SizeofExpr: {
+            const auto &s = static_cast<const ast::SizeofExpr &>(e);
+            if (!s.typeArg) return false;  // sizeof(expr) is not folded here
+            const Type m = resolveType(s.typeArg);
+            if (m.isError() || m.byteSize() == 0) return false;
+            out = m.byteSize();
             return true;
         }
         case ast::NodeKind::CastExpr:
@@ -175,9 +193,14 @@ private:
         return (t.isArray() || t.isSlice()) && t.elem() == Type::charTy();
     }
 
-    // What `expr as T` accepts: any scalar to any other scalar.
+    // What `expr as T` accepts: any scalar to any other scalar, any pointer to
+    // any other pointer (`rawptr` <-> `ptr<T>`, `ptr<T>` <-> `ptr<U>`), and a
+    // pointer to or from an integer (`addr as ptr<T>`, `p as u64`).
     static bool explicitlyConvertible(Type from, Type to) {
         if (from.isError() || to.isError()) return true;
+        if (from.isPointer() && to.isPointer()) return true;
+        if (from.isPointer() && to.isInteger()) return true;
+        if (from.isInteger() && to.isPointer()) return true;
         const bool fromScalar = from.isNumeric() || from.isBool();
         const bool toScalar = to.isNumeric() || to.isBool();
         return fromScalar && toScalar;
@@ -235,6 +258,12 @@ private:
         if (slot->type.isError() || to.isError() || slot->type == to)
             return true;
         if (adaptIntLiteral(*slot, to)) return true;  // literal becomes type `to`
+
+        // `null` takes on whatever pointer type its context wants.
+        if (slot->kind == ast::NodeKind::NullLiteralExpr && to.isPointer()) {
+            slot->type = to;
+            return true;
+        }
 
         // A `T[N]` decays to a `T[]` (same element type).
         if (slot->type.isArray() && to.isSlice() &&
@@ -396,10 +425,12 @@ private:
                     " (add an explicit `as " + targetT.name() + "`)");
     }
 
-    // A storable location: a variable, or an element of an array/slice.
+    // A storable location: a variable, an array/slice element, or the target of
+    // a dereference (`*p = v`).
     static bool isLValue(const ast::Expr &e) {
         return e.kind == ast::NodeKind::VarRefExpr ||
-               e.kind == ast::NodeKind::IndexExpr;
+               e.kind == ast::NodeKind::IndexExpr ||
+               e.kind == ast::NodeKind::DerefExpr;
     }
 
     void checkReturn(ast::ReturnStmt &r) {
@@ -472,6 +503,14 @@ private:
             auto &u = static_cast<ast::UnaryExpr &>(e);
             const Type ot = checkExpr(*u.operand);
             if (ot.isError()) return Type::error();
+            if (u.op == ast::UnaryOp::BitNot) {
+                if (!ot.isInteger()) {
+                    err(u.loc, llvm::Twine("unary '~' needs an integer, not ") +
+                                   ot.name());
+                    return Type::error();
+                }
+                return ot;
+            }
             if (!ot.isNumeric()) {
                 err(u.loc, llvm::Twine("unary '-' needs a number, not ") +
                                ot.name());
@@ -497,6 +536,14 @@ private:
             return checkSlice(static_cast<ast::SliceExpr &>(e));
         case ast::NodeKind::MemberExpr:
             return checkMember(static_cast<ast::MemberExpr &>(e));
+        case ast::NodeKind::NullLiteralExpr:
+            return Type::rawPtr();  // adapts to any pointer type via coerce()
+        case ast::NodeKind::AddrOfExpr:
+            return checkAddrOf(static_cast<ast::AddrOfExpr &>(e));
+        case ast::NodeKind::DerefExpr:
+            return checkDeref(static_cast<ast::DerefExpr &>(e));
+        case ast::NodeKind::SizeofExpr:
+            return checkSizeof(static_cast<ast::SizeofExpr &>(e));
         default:
             err(e.loc, "internal: unexpected expression kind in sema");
             return Type::error();
@@ -587,10 +634,156 @@ private:
         return Type::intTy();
     }
 
+    Type checkAddrOf(ast::AddrOfExpr &e) {
+        const Type ot = checkExpr(*e.operand);
+        if (ot.isError()) return Type::error();
+        if (!isLValue(*e.operand)) {
+            err(e.loc, "'&' needs an addressable value (a variable, an array "
+                       "element, or *p)");
+            return Type::error();
+        }
+        return Type::pointer(ot);
+    }
+
+    static bool isBuiltinTypeName(llvm::StringRef n) {
+        return llvm::StringSwitch<bool>(n)
+            .Cases("void", "bool", "int", "char", true)
+            .Cases("i8", "i16", "i32", "i64", true)
+            .Cases("u8", "u16", "u32", "u64", true)
+            .Cases("float", "double", "rawptr", true)
+            .Default(false);
+    }
+
+    Type checkSizeof(ast::SizeofExpr &e) {
+        if (e.typeArg) {
+            // `sizeof(name)` is ambiguous: `name` may be a type or a variable.
+            // Prefer a variable unless the name is a builtin type. (Array /
+            // slice / pointer forms are unambiguously types.)
+            if (e.typeArg->form == ast::TypeExpr::Form::Name &&
+                !isBuiltinTypeName(e.typeArg->name)) {
+                auto it = locals_.find(e.typeArg->name);
+                if (it != locals_.end()) {
+                    e.measured = it->second;
+                    return e.measured.isError() ? Type::error() : Type::intTy();
+                }
+            }
+            e.measured = resolveType(e.typeArg);
+        } else {
+            e.measured = checkExpr(*e.exprArg);
+        }
+        if (e.measured.isError()) return Type::error();
+        if (e.measured.isVoid()) {
+            err(e.loc, "sizeof needs a sized type, not 'void'");
+            return Type::error();
+        }
+        return Type::intTy();  // a compile-time int
+    }
+
+    Type checkDeref(ast::DerefExpr &e) {
+        const Type ot = checkExpr(*e.operand);
+        if (ot.isError()) return Type::error();
+        if (!ot.isPointer()) {
+            err(e.loc, llvm::Twine("cannot dereference a value of type ") +
+                           ot.name());
+            return Type::error();
+        }
+        if (ot.isRawPointer()) {
+            err(e.loc, "cannot dereference a rawptr (cast it to a ptr<T> first)");
+            return Type::error();
+        }
+        return ot.pointee();
+    }
+
+    static bool isBitwise(ast::BinaryOp op) {
+        return op == ast::BinaryOp::BitAnd || op == ast::BinaryOp::BitOr ||
+               op == ast::BinaryOp::BitXor;
+    }
+    static bool isShift(ast::BinaryOp op) {
+        return op == ast::BinaryOp::Shl || op == ast::BinaryOp::Shr;
+    }
+
+    // Operators with at least one pointer operand:
+    //   ptr == / != ptr | null,  ptr </ <= / > / >= ptr  -> bool
+    //   ptr + int,  int + ptr,  ptr - int                 -> the pointer type
+    //   ptr<T> - ptr<T>  (or rawptr - rawptr)             -> int (element count)
+    Type checkPointerBinary(ast::BinaryExpr &b, Type lt, Type rt) {
+        if (b.lhs->kind == ast::NodeKind::NullLiteralExpr && rt.isPointer()) {
+            b.lhs->type = rt;
+            lt = rt;
+        }
+        if (b.rhs->kind == ast::NodeKind::NullLiteralExpr && lt.isPointer()) {
+            b.rhs->type = lt;
+            rt = lt;
+        }
+
+        // ptr +/- int  (int + ptr commutes for `+`). The offset keeps its own
+        // integer type; codegen sign/zero-extends it to a machine word.
+        if (b.op == ast::BinaryOp::Add || b.op == ast::BinaryOp::Sub) {
+            const bool lPtr = lt.isPointer(), rPtr = rt.isPointer();
+            if (lPtr && rt.isInteger()) {
+                adaptIntLiteral(*b.rhs, Type::intTy());
+                return lt;
+            }
+            if (b.op == ast::BinaryOp::Add && rPtr && lt.isInteger()) {
+                adaptIntLiteral(*b.lhs, Type::intTy());
+                return rt;
+            }
+            if (b.op == ast::BinaryOp::Sub && lPtr && rPtr) {
+                if (lt != rt) {
+                    err(b.loc, llvm::Twine("subtracting incompatible pointer "
+                                           "types ") +
+                                   lt.name() + " and " + rt.name());
+                    return Type::error();
+                }
+                return Type::intTy();  // element (or byte, for rawptr) count
+            }
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' cannot combine " + lt.name() + " and " + rt.name());
+            return Type::error();
+        }
+
+        if (!lt.isPointer() || !rt.isPointer()) {
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' cannot combine " + lt.name() + " and " + rt.name());
+            return Type::error();
+        }
+        if (!ast::isComparison(b.op)) {
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' is not defined on pointers");
+            return Type::error();
+        }
+        if (lt != rt) {
+            err(b.loc, llvm::Twine("comparing incompatible pointer types ") +
+                           lt.name() + " and " + rt.name() +
+                           " (add an explicit `as`)");
+            return Type::error();
+        }
+        return Type::boolTy();
+    }
+
     Type checkBinary(ast::BinaryExpr &b) {
         Type lt = checkExpr(*b.lhs);
         Type rt = checkExpr(*b.rhs);
         if (lt.isError() || rt.isError()) return Type::error();
+
+        if (lt.isPointer() || rt.isPointer())
+            return checkPointerBinary(b, lt, rt);
+
+        // Shift: an integer value shifted by an integer count. The count keeps
+        // its own type (codegen converts it to the value's type); result type is
+        // the value's. `>>` is arithmetic for signed, logical for unsigned.
+        if (isShift(b.op)) {
+            if (!lt.isInteger() || !rt.isInteger()) {
+                err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                               "' needs integer operands, not " + lt.name() +
+                               " and " + rt.name());
+                return Type::error();
+            }
+            adaptIntLiteral(*b.rhs, lt);  // tidies a bare count literal
+            return lt;
+        }
+
+        const bool wantInteger = isBitwise(b.op) || b.op == ast::BinaryOp::Mod;
 
         if (!lt.isNumeric() || !rt.isNumeric()) {
             err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
@@ -621,8 +814,9 @@ private:
             return Type::error();
         }
 
-        if (b.op == ast::BinaryOp::Mod && !common.isInteger()) {
-            err(b.loc, "'%' needs integer operands");
+        if (wantInteger && !common.isInteger()) {
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' needs integer operands");
             return Type::error();
         }
 

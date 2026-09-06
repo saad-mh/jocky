@@ -24,8 +24,9 @@ enum class TypeKind {
     Bool,   // true / false
     Int,    // integer; see `bits` and `isSigned`
     Float,  // IEEE-754; `bits` is 32 (float) or 64 (double)
-    Array,  // T[N] - contiguous storage; `element` is T, `length` is N
-    Slice,  // T[]  - a borrowed { base, len } view; `element` is T
+    Array,   // T[N] - contiguous storage; `element` is T, `length` is N
+    Slice,   // T[]  - a borrowed { base, len } view; `element` is T
+    Pointer, // ptr<T> (`element` is T) or rawptr (`element` is void)
 };
 
 struct Type {
@@ -62,6 +63,13 @@ struct Type {
         t.element = std::make_shared<Type>(std::move(elem));
         return t;
     }
+    static Type pointer(Type pointee) {
+        Type t;
+        t.kind = TypeKind::Pointer;
+        t.element = std::make_shared<Type>(std::move(pointee));
+        return t;
+    }
+    static Type rawPtr() { return pointer(voidTy()); }
 
     // --- queries ---------------------------------------------------
     bool isError() const { return kind == TypeKind::Error; }
@@ -72,9 +80,28 @@ struct Type {
     bool isNumeric() const { return isInteger() || isFloat(); }
     bool isArray() const { return kind == TypeKind::Array; }
     bool isSlice() const { return kind == TypeKind::Slice; }
+    bool isPointer() const { return kind == TypeKind::Pointer; }
+    bool isRawPointer() const { return isPointer() && element->isVoid(); }
+    bool isTypedPointer() const { return isPointer() && !element->isVoid(); }
     bool isScalar() const { return isBool() || isNumeric(); }
 
-    const Type &elem() const { return *element; }  // Array / Slice only
+    const Type &elem() const { return *element; }     // Array / Slice
+    const Type &pointee() const { return *element; }  // Pointer
+
+    // Size in bytes, C layout. 0 for `void` / an error. Scalar elements need no
+    // padding, so an array is just `length * element size`; a slice is a
+    // { ptr, i64 } pair. (Struct sizes arrive with struct types in L2.)
+    unsigned long long byteSize() const {
+        switch (kind) {
+        case TypeKind::Bool: return 1;
+        case TypeKind::Int:
+        case TypeKind::Float: return bits / 8;
+        case TypeKind::Pointer: return 8;
+        case TypeKind::Slice: return 16;
+        case TypeKind::Array: return length * element->byteSize();
+        default: return 0;
+        }
+    }
 
     bool operator==(const Type &o) const {
         if (kind != o.kind || bits != o.bits || isSigned != o.isSigned ||

@@ -34,6 +34,8 @@ enum class TokenKind {
     KwAs,     // the `expr as Type` cast operator
     KwTrue,
     KwFalse,
+    KwNull,     // the null-pointer literal
+    KwSizeof,   // sizeof(T) / sizeof(expr)
 
     // punctuations
     LParen,     // (
@@ -55,11 +57,15 @@ enum class TokenKind {
     Star,     // *
     Slash,    // /
     Percent,  // %
+    Amp,      // &   (bitwise and; also prefix address-of)
+    Pipe,     // |
+    Caret,    // ^
+    Tilde,    // ~
     EqEq,     // ==
     NotEq,    // !=
-    Lt,       // <
+    Lt,       // <   (a shift `<<` is two adjacent Lt; see the parser)
     LtEq,     // <=
-    Gt,       // >
+    Gt,       // >   (a shift `>>` is two adjacent Gt)
     GtEq,     // >=
 
     Eof,    // end of input; always the last token

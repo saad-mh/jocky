@@ -82,6 +82,8 @@ llvm::Type *CodeGen::llvmType(ast::Type t) {
         return llvm::ArrayType::get(llvmType(t.elem()), t.length);
     case ast::TypeKind::Slice:
         return sliceTy();
+    case ast::TypeKind::Pointer:
+        return ptrTy();  // opaque - `ptr<T>` and `rawptr` are the same in IR
     case ast::TypeKind::Error:
         return i64Ty();  // unreachable post-sema; keeps codegen total
     }
@@ -383,6 +385,8 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
         const auto &u = static_cast<const ast::UnaryExpr &>(expr);
         llvm::Value *operand = lowerExpr(*u.operand);
         if (!operand) return nullptr;
+        if (u.op == ast::UnaryOp::BitNot)
+            return builder_.CreateNot(operand, "not");  // xor -1
         return expr.type.isFloat() ? builder_.CreateFNeg(operand, "fneg")
                                    : builder_.CreateNeg(operand, "neg");
     }
@@ -409,13 +413,27 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
         return lowerArrayToSlice(
             static_cast<const ast::ArrayToSliceExpr &>(expr));
 
+    case ast::NodeKind::NullLiteralExpr:
+        return llvm::ConstantPointerNull::get(ptrTy());
+    case ast::NodeKind::SizeofExpr:
+        return i64(static_cast<std::int64_t>(
+            static_cast<const ast::SizeofExpr &>(expr).measured.byteSize()));
+    case ast::NodeKind::AddrOfExpr:
+        return lowerAddr(*static_cast<const ast::AddrOfExpr &>(expr).operand);
+    case ast::NodeKind::DerefExpr: {
+        llvm::Value *addr = lowerAddr(expr);  // the pointer value is the address
+        if (!addr) return nullptr;
+        return builder_.CreateLoad(llvmType(expr.type), addr, "deref");
+    }
+
     default:
         error(expr.loc, "internal: unexpected expression kind in codegen");
         return nullptr;
     }
 }
 
-// The address of an lvalue: a variable's slot, or a computed element address.
+// The address of an lvalue: a variable's slot, a computed element address, or
+// (for `*p`) the pointer value itself.
 llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
     if (e.kind == ast::NodeKind::VarRefExpr) {
         Local *local = lookupLocal(static_cast<const ast::VarRefExpr &>(e).name);
@@ -435,6 +453,8 @@ llvm::Value *CodeGen::lowerAddr(const ast::Expr &e) {
         return builder_.CreateGEP(llvmType(seq.elem), seq.basePtr, idx,
                                   "elt.addr");
     }
+    if (e.kind == ast::NodeKind::DerefExpr)
+        return lowerExpr(*static_cast<const ast::DerefExpr &>(e).operand);
     error(e.loc, "internal: expression is not an lvalue in codegen");
     return nullptr;
 }
@@ -541,7 +561,15 @@ llvm::Value *CodeGen::lowerConversion(const ast::Expr &expr) {
 
 llvm::Value *CodeGen::emitConvert(llvm::Value *v, ast::Type from, ast::Type to) {
     if (from == to) return v;
+    // All pointers share one opaque LLVM type, so a pointer<->pointer cast is a
+    // no-op at the IR level (it only changes the JOCKY type).
+    if (from.isPointer() && to.isPointer()) return v;
     llvm::Type *dst = llvmType(to);
+
+    if (from.isPointer() && to.isInteger())
+        return builder_.CreatePtrToInt(v, dst, "ptrtoint");
+    if (from.isInteger() && to.isPointer())
+        return builder_.CreateIntToPtr(v, dst, "inttoptr");
 
     if (to.isBool()) {
         if (from.isFloat())
@@ -580,6 +608,51 @@ llvm::Value *CodeGen::lowerBinary(const ast::BinaryExpr &e) {
 
     // sema has coerced both sides to one type; read it off the lhs.
     const ast::Type opTy = e.lhs->type;
+
+    // Pointer arithmetic (L1.4). Sema guarantees the operand shapes.
+    if ((e.lhs->type.isPointer() || e.rhs->type.isPointer()) &&
+        (e.op == ast::BinaryOp::Add || e.op == ast::BinaryOp::Sub)) {
+        const bool lPtr = e.lhs->type.isPointer();
+
+        if (lPtr && e.rhs->type.isPointer()) {
+            // ptr - ptr -> element count (byte count for rawptr).
+            llvm::Value *li = builder_.CreatePtrToInt(l, i64Ty(), "p.lhs");
+            llvm::Value *ri = builder_.CreatePtrToInt(r, i64Ty(), "p.rhs");
+            llvm::Value *diff = builder_.CreateSub(li, ri, "p.diff");
+            const unsigned long long step = e.lhs->type.pointee().byteSize();
+            return step > 1 ? builder_.CreateSDiv(diff, i64(step), "p.count")
+                            : diff;
+        }
+
+        llvm::Value *ptr = lPtr ? l : r;
+        const ast::Type ptrTy_ = lPtr ? e.lhs->type : e.rhs->type;
+        llvm::Value *off = lPtr ? r : l;
+        const ast::Type offTy = lPtr ? e.rhs->type : e.lhs->type;
+        off = emitConvert(off, offTy, ast::Type::intTy());
+        if (e.op == ast::BinaryOp::Sub) off = builder_.CreateNeg(off, "p.neg");
+        llvm::Type *stepTy = ptrTy_.isRawPointer()
+                                 ? llvm::Type::getInt8Ty(ctx_)
+                                 : llvmType(ptrTy_.pointee());
+        return builder_.CreateGEP(stepTy, ptr, off, "p.off");
+    }
+
+    // Shift: the count may be a different integer type - bring it to the value's
+    // type first (LLVM needs both operands the same). `>>` picks ashr / lshr.
+    if (e.op == ast::BinaryOp::Shl || e.op == ast::BinaryOp::Shr) {
+        r = emitConvert(r, e.rhs->type, opTy);
+        if (e.op == ast::BinaryOp::Shl) return builder_.CreateShl(l, r, "shl");
+        return opTy.isSigned ? builder_.CreateAShr(l, r, "ashr")
+                             : builder_.CreateLShr(l, r, "lshr");
+    }
+
+    if (!ast::isComparison(e.op) && !opTy.isFloat()) {
+        switch (e.op) {
+        case ast::BinaryOp::BitAnd: return builder_.CreateAnd(l, r, "and");
+        case ast::BinaryOp::BitOr: return builder_.CreateOr(l, r, "or");
+        case ast::BinaryOp::BitXor: return builder_.CreateXor(l, r, "xor");
+        default: break;
+        }
+    }
 
     if (ast::isComparison(e.op)) {
         return opTy.isFloat()

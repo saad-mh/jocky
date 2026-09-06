@@ -19,6 +19,8 @@ std::string typeName(const TypeExpr *t) {
         return typeName(t->element) + "[N]";
     case TypeExpr::Form::Slice:
         return typeName(t->element) + "[]";
+    case TypeExpr::Form::Pointer:
+        return "ptr<" + typeName(t->element) + ">";
     }
     return "?";
 }
@@ -295,6 +297,40 @@ private:
             expr(*n.array);
             indent_ -= 1;
             line(")");
+            break;
+        }
+        case NodeKind::NullLiteralExpr:
+            line("(null" + ty(e) + ")");
+            break;
+        case NodeKind::AddrOfExpr: {
+            const auto &n = static_cast<const AddrOfExpr &>(e);
+            line("(addrof" + ty(e));
+            indent_ += 1;
+            expr(*n.operand);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::DerefExpr: {
+            const auto &n = static_cast<const DerefExpr &>(e);
+            line("(deref" + ty(e));
+            indent_ += 1;
+            expr(*n.operand);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::SizeofExpr: {
+            const auto &n = static_cast<const SizeofExpr &>(e);
+            if (n.typeArg) {
+                line("(sizeof " + typeName(n.typeArg) + ty(e) + ")");
+            } else {
+                line("(sizeof" + ty(e));
+                indent_ += 1;
+                expr(*n.exprArg);
+                indent_ -= 1;
+                line(")");
+            }
             break;
         }
         default:
