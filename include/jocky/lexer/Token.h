@@ -35,7 +35,7 @@ enum class TokenKind {
     KwTrue,
     KwFalse,
 
-    // Punctuation.
+    // punctuations
     LParen,     // (
     RParen,     // )
     LBrace,     // {
@@ -45,7 +45,7 @@ enum class TokenKind {
     Arrow,      // ->
     Semicolon,  // ;
 
-    // Operators.
+    // operators
     Assign,   // =
     Plus,     // +
     Minus,    // -

@@ -146,7 +146,7 @@ llvm::Constant *CodeGen::internCString(llvm::StringRef bytes) {
     return builder_.CreateGlobalString(bytes, "jocky.str", 0, module_.get());
 }
 
-// --- function bodies --------------------------------------------
+// func bodies
 
 llvm::AllocaInst *CodeGen::createEntryAlloca(llvm::Function *fn,
                                              llvm::StringRef name,
@@ -172,7 +172,7 @@ void CodeGen::emitDefaultReturn() {
 void CodeGen::lowerFunctionBody(const ast::FunctionDecl &fn) {
     llvm::Function *f = functions_.lookup(fn.name);
     if (!f) return;           // its declaration failed earlier
-    if (!f->empty()) return;  // already lowered
+    if (!f->empty()) return;  // already lowered, perchance
 
     auto *entry = llvm::BasicBlock::Create(ctx_, "entry", f);
     builder_.SetInsertPoint(entry);
@@ -319,7 +319,7 @@ void CodeGen::lowerWhile(const ast::WhileStmt &stmt) {
     builder_.SetInsertPoint(endBB);
 }
 
-// --- expressions ----------------------------------------------
+// exprr
 
 llvm::Value *CodeGen::lowerCondition(const ast::Expr &e) {
     llvm::Value *v = lowerExpr(e);

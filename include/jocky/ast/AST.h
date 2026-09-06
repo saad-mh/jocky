@@ -66,7 +66,7 @@ const char *binaryOpSymbol(BinaryOp op);
 // True for == != < <= > >= (the ops that yield `bool`).
 bool isComparison(BinaryOp op);
 
-// --- Base -------------------------------------------------------------
+// Base
 
 struct Node {
     NodeKind kind;
@@ -93,7 +93,7 @@ struct Stmt : Node {
     using Node::Node;
 };
 
-// --- Expressions ----------------------------------------------------
+// Exprr
 
 struct IntLiteralExpr : Expr {
     std::int64_t value;
@@ -185,7 +185,7 @@ struct ImplicitConversionExpr : Expr {
         : Expr(NodeKind::ImplicitConversionExpr, l), operand(e) {}
 };
 
-// --- Statements ---------------------------------------------------
+// Statements
 
 struct VarDeclStmt : Stmt {
     std::string name;
@@ -235,7 +235,7 @@ struct ReturnStmt : Stmt {
         : Stmt(NodeKind::ReturnStmt, l), value(v) {}
 };
 
-// --- Top level -------------------------------------------------
+// Top Level
 
 struct Param {
     std::string name;

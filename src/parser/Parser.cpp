@@ -25,11 +25,11 @@ std::string describeToken(const Token &t) {
 Parser::Parser(llvm::ArrayRef<Token> tokens, DiagnosticEngine &diags)
     : tokens_(tokens), diags_(diags) {}
 
-// --- token cursor ---------------------------------------------------
+// token cursor
 
 const Token &Parser::peek(std::size_t ahead) const {
     std::size_t i = pos_ + ahead;
-    if (i >= tokens_.size()) i = tokens_.size() - 1;  // clamp to the Eof token
+    if (i >= tokens_.size()) i = tokens_.size() - 1;  // clamp to the eof token
     return tokens_[i];
 }
 
@@ -78,7 +78,7 @@ void Parser::synchronize() {
     }
 }
 
-// --- grammar rules -----------------------------------------------
+// grammar rules
 
 std::unique_ptr<ast::Module> Parser::parseModule() {
     module_ = std::make_unique<ast::Module>();
@@ -303,7 +303,7 @@ ast::Stmt *Parser::parseReturn() {
     return make<ast::ReturnStmt>(loc, value);
 }
 
-// --- expressions (precedence climbing, lowest to highest) -------
+// expressions (precedence climbing, l to h)
 
 ast::Expr *Parser::parseExpr() { return parseEquality(); }
 

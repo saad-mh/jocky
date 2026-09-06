@@ -20,7 +20,7 @@
 
 namespace jocky::codegen {
 
-// --- individual passes ------------------------------------------------
+// individual passes
 
 // Inserts one to three unused ("junk") integer instructions into every basic
 // block of every user-defined function. The junk is valid SSA whose result is
@@ -87,7 +87,7 @@ private:
     std::uint64_t seed_;
 };
 
-// --- the registry ---------------------------------------------------
+// the registry
 
 // Appends the obfuscation passes selected by `obf` to `mpm`, in a fixed order.
 // An empty `obf.passes` selects every pass. Unknown names are reported on

@@ -29,7 +29,7 @@ struct Type {
     unsigned bits = 0;      // Int: 8/16/32/64.  Float: 32/64.  Otherwise 0.
     bool isSigned = false;  // Int only.
 
-    // --- factories ---------------------------------------------------
+    // factories
     static Type error() { return {TypeKind::Error, 0, false}; }
     static Type voidTy() { return {TypeKind::Void, 0, false}; }
     static Type boolTy() { return {TypeKind::Bool, 0, false}; }
@@ -41,7 +41,7 @@ struct Type {
     static Type intTy() { return integer(64, true); }
     static Type charTy() { return integer(8, false); }
 
-    // --- queries ---------------------------------------------------
+    // queries
     bool isError() const { return kind == TypeKind::Error; }
     bool isVoid() const { return kind == TypeKind::Void; }
     bool isBool() const { return kind == TypeKind::Bool; }

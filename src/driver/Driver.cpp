@@ -225,7 +225,7 @@ int runBuild(const Options &options) {
         return 0;
     }
 
-    // --- backend: IR -> object file -------------------------------------
+    // backend: IR -> object file
 
     codegen::initializeNativeTarget();
     std::unique_ptr<llvm::TargetMachine> machine =
@@ -248,7 +248,7 @@ int runBuild(const Options &options) {
         return 0;
     }
 
-    // --- full build: object file -> linked executable -----------------
+    // full build: object file -> linked executable
 
     const std::string exePath = executableOutputPath(options);
 
