@@ -157,8 +157,13 @@ int runParse(const Options &options) {
     std::unique_ptr<ast::Module> module = frontend(options, diags, buffer);
     if (!module) return 1;
 
+    // Run sema too, so `--dump-ast` shows each expression's resolved type. The
+    // dump is still printed on a semantic error (best effort), but the exit
+    // code reflects it.
+    const bool ok = sema::analyze(*module, diags);
     if (options.dumpAst) ast::printAST(llvm::outs(), *module);
-    return 0;
+    if (!ok) diags.printAll(llvm::errs());
+    return ok ? 0 : 1;
 }
 
 // `jocky check`: front end + semantic analysis, no codegen. Silent on success;

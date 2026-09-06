@@ -1,4 +1,7 @@
 // RUN: %jocky parse --dump-ast "%s" | %FileCheck "%s"
+//
+// `parse --dump-ast` runs sema too, so every expression shows its resolved
+// type (` :int`, ` :bool`, ...). A comparison is `bool`.
 
 func f(a: int, b: int) -> int {
     var x = a + b * 2;
@@ -18,39 +21,39 @@ print(f(3, 4));
 // CHECK-NEXT:   (func f (a:int b:int) -> int
 // CHECK-NEXT:     (block
 // CHECK-NEXT:       (vardecl x
-// CHECK-NEXT:         (binary Add
-// CHECK-NEXT:           (varref a)
-// CHECK-NEXT:           (binary Mul
-// CHECK-NEXT:             (varref b)
-// CHECK-NEXT:             (intlit 2)
+// CHECK-NEXT:         (binary Add :int
+// CHECK-NEXT:           (varref a :int)
+// CHECK-NEXT:           (binary Mul :int
+// CHECK-NEXT:             (varref b :int)
+// CHECK-NEXT:             (intlit 2 :int)
 // CHECK-NEXT:           )
 // CHECK-NEXT:         )
 // CHECK-NEXT:       )
 // CHECK-NEXT:       (if
-// CHECK-NEXT:         (binary Lt
-// CHECK-NEXT:           (varref x)
-// CHECK-NEXT:           (intlit 10)
+// CHECK-NEXT:         (binary Lt :bool
+// CHECK-NEXT:           (varref x :int)
+// CHECK-NEXT:           (intlit 10 :int)
 // CHECK-NEXT:         )
 // CHECK-NEXT:         (block
 // CHECK-NEXT:           (assign
-// CHECK-NEXT:             (varref x)
-// CHECK-NEXT:             (unary Neg
-// CHECK-NEXT:               (varref x)
+// CHECK-NEXT:             (varref x :int)
+// CHECK-NEXT:             (unary Neg :int
+// CHECK-NEXT:               (varref x :int)
 // CHECK-NEXT:             )
 // CHECK-NEXT:           )
 // CHECK-NEXT:         )
 // CHECK-NEXT:         (block
 // CHECK-NEXT:           (while
-// CHECK-NEXT:             (binary Gt
-// CHECK-NEXT:               (varref x)
-// CHECK-NEXT:               (intlit 0)
+// CHECK-NEXT:             (binary Gt :bool
+// CHECK-NEXT:               (varref x :int)
+// CHECK-NEXT:               (intlit 0 :int)
 // CHECK-NEXT:             )
 // CHECK-NEXT:             (block
 // CHECK-NEXT:               (assign
-// CHECK-NEXT:                 (varref x)
-// CHECK-NEXT:                 (binary Sub
-// CHECK-NEXT:                   (varref x)
-// CHECK-NEXT:                   (intlit 1)
+// CHECK-NEXT:                 (varref x :int)
+// CHECK-NEXT:                 (binary Sub :int
+// CHECK-NEXT:                   (varref x :int)
+// CHECK-NEXT:                   (intlit 1 :int)
 // CHECK-NEXT:                 )
 // CHECK-NEXT:               )
 // CHECK-NEXT:             )
@@ -58,16 +61,16 @@ print(f(3, 4));
 // CHECK-NEXT:         )
 // CHECK-NEXT:       )
 // CHECK-NEXT:       (return
-// CHECK-NEXT:         (varref x)
+// CHECK-NEXT:         (varref x :int)
 // CHECK-NEXT:       )
 // CHECK-NEXT:     )
 // CHECK-NEXT:   )
 // CHECK-NEXT:   (toplevel
 // CHECK-NEXT:     (exprstmt
-// CHECK-NEXT:       (call print
-// CHECK-NEXT:         (call f
-// CHECK-NEXT:           (intlit 3)
-// CHECK-NEXT:           (intlit 4)
+// CHECK-NEXT:       (call print :int
+// CHECK-NEXT:         (call f :int
+// CHECK-NEXT:           (intlit 3 :int)
+// CHECK-NEXT:           (intlit 4 :int)
 // CHECK-NEXT:         )
 // CHECK-NEXT:       )
 // CHECK-NEXT:     )
