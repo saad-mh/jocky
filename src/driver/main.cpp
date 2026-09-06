@@ -32,6 +32,7 @@ const char *const kUsage =
     "\n"
     "usage:\n"
     "  jocky build <in.jk> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
+    "                      [-l <lib>] [-L <dir>]\n"
     "                      [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
     "                      [--keep-temps] [--no-verify] [-v]\n"
     "  jocky check <in.jk>                    (front end + semantic analysis only)\n"
@@ -98,6 +99,22 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
                 return 2;
             }
             opts.outputPath = std::string(args[++i]);
+        } else if (a == "-l") {
+            if (i + 1 >= args.size()) {
+                llvm::errs() << "jocky: -l needs a library name\n";
+                return 2;
+            }
+            opts.extraLibs.emplace_back(args[++i]);
+        } else if (a.rfind("-l", 0) == 0 && a.size() > 2) {
+            opts.extraLibs.emplace_back(a.substr(2));
+        } else if (a == "-L") {
+            if (i + 1 >= args.size()) {
+                llvm::errs() << "jocky: -L needs a directory\n";
+                return 2;
+            }
+            opts.libSearchPaths.emplace_back(args[++i]);
+        } else if (a.rfind("-L", 0) == 0 && a.size() > 2) {
+            opts.libSearchPaths.emplace_back(a.substr(2));
         } else if (a == "-O0") {
             opts.optimize = false;
         } else if (a == "-O1") {

@@ -41,6 +41,7 @@ enum class NodeKind {
     AddrOfExpr,          // &lvalue
     DerefExpr,           // *ptr
     SizeofExpr,          // sizeof(T) / sizeof(expr)
+    OffsetofExpr,        // offsetof(Struct, field)
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -52,6 +53,8 @@ enum class NodeKind {
     // Type syntax.
     TypeExpr,
     // Top level.
+    StructDecl,
+    ExternDecl,
     FunctionDecl,
     Module,
 };
@@ -276,6 +279,16 @@ struct SizeofExpr : Expr {
     explicit SizeofExpr(SourceLocation l) : Expr(NodeKind::SizeofExpr, l) {}
 };
 
+// `offsetof(Struct, field)` - a compile-time `int` byte offset.
+struct OffsetofExpr : Expr {
+    std::string structName;
+    std::string fieldName;
+    unsigned long long resolvedOffset = 0;  // filled by sema
+    OffsetofExpr(SourceLocation l, std::string s, std::string f)
+        : Expr(NodeKind::OffsetofExpr, l), structName(std::move(s)),
+          fieldName(std::move(f)) {}
+};
+
 // Statements
 
 struct VarDeclStmt : Stmt {
@@ -334,6 +347,35 @@ struct Param {
     SourceLocation loc;
     TypeExpr *typeAnnotation = nullptr;  // `p: T`
     Type type;                           // resolved by sema
+    bool isOut = false;                  // the `out` marker (extern params only)
+};
+
+// `extern "C" name(params) -> ret;` - a C function implemented elsewhere and
+// resolved at link time. `...` at the end of the parameter list makes it
+// varargs. No body.
+struct ExternDecl : Node {
+    std::string name;
+    std::vector<Param> params;
+    bool isVarArg = false;
+    TypeExpr *returnType = nullptr;  // null means `-> int`
+    Type resolvedReturn;            // resolved by sema
+    ExternDecl(SourceLocation l, std::string n)
+        : Node(NodeKind::ExternDecl, l), name(std::move(n)) {}
+};
+
+// `struct Name { field: T, ... }` - fields in declared order, C natural
+// alignment, no reordering. Sema builds an `ast::StructInfo` from this.
+struct FieldDecl {
+    std::string name;
+    SourceLocation loc;
+    TypeExpr *typeAnnotation = nullptr;
+};
+
+struct StructDecl : Node {
+    std::string name;
+    std::vector<FieldDecl> fields;
+    StructDecl(SourceLocation l, std::string n)
+        : Node(NodeKind::StructDecl, l), name(std::move(n)) {}
 };
 
 struct FunctionDecl : Node {
@@ -347,7 +389,10 @@ struct FunctionDecl : Node {
 };
 
 struct Module : Node {
+    std::vector<StructDecl *> structs;
+    std::vector<ExternDecl *> externs;
     std::vector<FunctionDecl *> functions;
+    std::vector<std::string> linkLibs;  // `link "name";` pragmas
     std::vector<Stmt *> topLevelStatements;  // run as the body of an implicit main
 
     // Owns every node above. See the file header.

@@ -41,6 +41,7 @@ once (it provisions a vendored LLVM 18 SDK under `.vendor/`), then
 
 ```powershell
 .\build\bin\jocky.exe build <file>.jk -o <file>.exe   # compile and link
+.\build\bin\jocky.exe build <file>.jk -l ntdll -L C:\libs   # extra link inputs
 .\build\bin\jocky.exe build --emit-llvm <file>.jk     # print the LLVM IR
 .\build\bin\jocky.exe build --obfuscate <file>.jk -o <file>.exe   # + obfuscation passes
 .\build\bin\jocky.exe check <file>.jk                 # front end + semantic analysis only

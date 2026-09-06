@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace jocky::driver {
 
@@ -51,6 +52,11 @@ struct Options {
     // --obf-seed <n>: seed the randomised parts of those passes so a build is
     // reproducible. 0 (the default) means "derive one at run time".
     std::uint64_t obfSeed = 0;
+
+    // Link inputs (build only): `-l <name>` / `-lname` and `-L <dir>` / `-Ldir`.
+    // Also fed by `link "name";` pragmas in the source.
+    std::vector<std::string> extraLibs;
+    std::vector<std::string> libSearchPaths;
 
     // Debug dumps for the Lex / Parse sub-commands.
     bool dumpTokens = false;  // lex --dump-tokens

@@ -1,32 +1,33 @@
 // The type of a JOCKY value.
 //
-// v0 had exactly one type (a 64-bit signed integer). The L0 milestone replaces
-// that with a small static type system; this header is its core. A `Type` is a
-// small value - copy it freely, compare it with `==`. The semantic-analysis
-// stage (src/sema/) computes a `Type` for every expression and stores it on the
-// node; codegen then lowers an already-typed tree.
-//
-// Scalar kinds plus the two aggregate forms L0.6 needs: a fixed array `T[N]`
-// and a borrowed slice `T[]` (a `{ base, len }` pair). Pointer and struct types
-// arrive in later milestones (L1/L2); the `kind` enum leaves room.
+// A `Type` is a small value - copy it freely, compare it with `==`. Compound
+// types (array, slice, pointer, struct) hang their element / field types off a
+// shared_ptr so `Type` stays copyable. Sema computes a `Type` for every
+// expression and stores it on the node; codegen lowers an already-typed tree.
 
 #ifndef JOCKY_AST_TYPE_H
 #define JOCKY_AST_TYPE_H
 
 #include <memory>
 #include <string>
+#include <vector>
+
+#include <llvm/ADT/StringRef.h>
 
 namespace jocky::ast {
 
+struct StructInfo;  // defined at the bottom of this header
+
 enum class TypeKind {
-    Error,  // stand-in after a type error; suppresses cascading diagnostics
-    Void,   // no value (a `-> void` function's result)
-    Bool,   // true / false
-    Int,    // integer; see `bits` and `isSigned`
-    Float,  // IEEE-754; `bits` is 32 (float) or 64 (double)
+    Error,   // stand-in after a type error; suppresses cascading diagnostics
+    Void,    // no value (a `-> void` function's result)
+    Bool,    // true / false
+    Int,     // integer; see `bits` and `isSigned`
+    Float,   // IEEE-754; `bits` is 32 (float) or 64 (double)
     Array,   // T[N] - contiguous storage; `element` is T, `length` is N
     Slice,   // T[]  - a borrowed { base, len } view; `element` is T
     Pointer, // ptr<T> (`element` is T) or rawptr (`element` is void)
+    Struct,  // a declared `struct` with C layout; see `record`
 };
 
 struct Type {
@@ -34,7 +35,8 @@ struct Type {
     unsigned bits = 0;      // Int: 8/16/32/64.  Float: 32/64.  Otherwise 0.
     bool isSigned = false;  // Int only.
     unsigned length = 0;    // Array only: the element count.
-    std::shared_ptr<Type> element;  // Array / Slice: the element type.
+    std::shared_ptr<Type> element;              // Array / Slice / Pointer
+    std::shared_ptr<const StructInfo> record;   // Struct
 
     // --- factories ---------------------------------------------------
     static Type error() { return makeScalar(TypeKind::Error, 0, false); }
@@ -45,8 +47,6 @@ struct Type {
     }
     static Type f32() { return makeScalar(TypeKind::Float, 32, false); }
     static Type f64() { return makeScalar(TypeKind::Float, 64, false); }
-
-    // `int` / `i64` and `char` / `u8` are spelling synonyms, not distinct types.
     static Type intTy() { return integer(64, true); }
     static Type charTy() { return integer(8, false); }
 
@@ -70,6 +70,12 @@ struct Type {
         return t;
     }
     static Type rawPtr() { return pointer(voidTy()); }
+    static Type structType(std::shared_ptr<const StructInfo> si) {
+        Type t;
+        t.kind = TypeKind::Struct;
+        t.record = std::move(si);
+        return t;
+    }
 
     // --- queries ---------------------------------------------------
     bool isError() const { return kind == TypeKind::Error; }
@@ -83,30 +89,23 @@ struct Type {
     bool isPointer() const { return kind == TypeKind::Pointer; }
     bool isRawPointer() const { return isPointer() && element->isVoid(); }
     bool isTypedPointer() const { return isPointer() && !element->isVoid(); }
+    bool isStruct() const { return kind == TypeKind::Struct; }
     bool isScalar() const { return isBool() || isNumeric(); }
 
     const Type &elem() const { return *element; }     // Array / Slice
     const Type &pointee() const { return *element; }  // Pointer
+    const StructInfo &structInfo() const { return *record; }  // Struct
 
-    // Size in bytes, C layout. 0 for `void` / an error. Scalar elements need no
-    // padding, so an array is just `length * element size`; a slice is a
-    // { ptr, i64 } pair. (Struct sizes arrive with struct types in L2.)
-    unsigned long long byteSize() const {
-        switch (kind) {
-        case TypeKind::Bool: return 1;
-        case TypeKind::Int:
-        case TypeKind::Float: return bits / 8;
-        case TypeKind::Pointer: return 8;
-        case TypeKind::Slice: return 16;
-        case TypeKind::Array: return length * element->byteSize();
-        default: return 0;
-        }
-    }
+    // C layout, in bytes / bytes. `alignOf` of `void` / error is 1, `byteSize`
+    // 0. Out-of-line because the Struct cases need a complete StructInfo.
+    unsigned long long byteSize() const;
+    unsigned alignOf() const;
 
     bool operator==(const Type &o) const {
         if (kind != o.kind || bits != o.bits || isSigned != o.isSigned ||
             length != o.length)
             return false;
+        if (kind == TypeKind::Struct) return record.get() == o.record.get();
         if (element || o.element) {
             if (!element || !o.element) return false;
             return *element == *o.element;
@@ -116,7 +115,7 @@ struct Type {
     bool operator!=(const Type &o) const { return !(*this == o); }
 
     // A human-readable name for diagnostics and the AST dump: "int", "char",
-    // "u32", "bool", "double", "void", "char[16]", "int[]", "<error>".
+    // "u32", "double", "char[16]", "int[]", "ptr<int>", "rawptr", "MyStruct".
     std::string name() const;
 
 private:
@@ -126,6 +125,28 @@ private:
         t.bits = b;
         t.isSigned = sign;
         return t;
+    }
+};
+
+// One field of a struct, after sema has resolved its type and C offset.
+struct FieldInfo {
+    std::string name;
+    Type type;
+    unsigned offset = 0;
+};
+
+// A declared struct's layout. Built once by sema and shared (nominal typing:
+// two `StructInfo`s are the same type only if they are the same object).
+struct StructInfo {
+    std::string name;
+    std::vector<FieldInfo> fields;
+    unsigned size = 0;   // padded to `align`
+    unsigned align = 1;
+
+    const FieldInfo *find(llvm::StringRef fieldName) const {
+        for (const FieldInfo &f : fields)
+            if (f.name == fieldName) return &f;
+        return nullptr;
     }
 };
 

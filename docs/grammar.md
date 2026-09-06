@@ -32,7 +32,8 @@ milestone plan.
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
     keywords   func  var  if  else  while  return  as  true  false  null
-               sizeof
+               sizeof  offsetof  struct  extern
+               (`link` and `out` are contextual - keywords only in position)
     symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
                == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
@@ -42,7 +43,18 @@ ordinary identifier that codegen treats as a builtin.
 
 ## Grammar
 
-    program      := (functionDecl | statement)*
+    program      := (structDecl | externDecl | linkPragma | functionDecl
+                     | statement)*
+
+    structDecl   := 'struct' IDENT '{' (IDENT ':' type ','?)* '}'
+                                               // fields in declared order, C
+                                               // natural alignment, no reorder
+
+    linkPragma   := 'link' STRING ';'          // add `-l<name>` to the link
+
+    externDecl   := 'extern' '"C"' IDENT '(' externParams? ')' ('->' type)? ';'
+    externParams := externParam (',' externParam)* (',' '...')? | '...'
+    externParam  := 'out'? IDENT ':' type      // `out` is a documentation marker
 
     functionDecl := 'func' IDENT '(' paramList? ')' ('->' type)? block
     paramList    := param (',' param)*
@@ -98,6 +110,7 @@ ordinary identifier that codegen treats as a builtin.
                     | STRING
                     | 'true' | 'false' | 'null'
                     | 'sizeof' '(' (type | expr) ')'   // compile-time int
+                    | 'offsetof' '(' IDENT ',' IDENT ')'  // compile-time int
                     | '[' (expr (',' expr)*)? ']'   // an array literal
                     | IDENT
                     | IDENT '(' argList? ')'    // a call
@@ -142,6 +155,31 @@ between them. `addr as ptr<T>` and `p as u64` convert between a pointer and an
 integer address. `sizeof(T)` / `sizeof(expr)` is the C-layout byte size, a
 compile-time `int` (`sizeof(u32)` is 4, `sizeof(char[16])` is 16,
 `sizeof(ptr<T>)` is 8).
+
+### Structs
+
+- `struct Name { field: T, ... }` declares a record with C natural alignment:
+  fields keep declared order, each is aligned to its own alignment, the struct's
+  alignment is its widest field's, and its size is padded to that. A field of
+  `void` type, a duplicate field or struct name, and a by-value self-reference
+  (use `ptr<Name>`) are errors.
+- `s.field` reads or writes a field (an lvalue); `&s` and `&s.field` take its
+  address. Whole-struct assignment (`a = b`, same struct type) copies.
+- A `ptr<S>` auto-dereferences for field access, so a struct can be overlaid on
+  a byte buffer: `var h = buf as ptr<Header>; h.field`. An array or slice `as` a
+  pointer yields its base address.
+- `offsetof(S, field)` is the field's byte offset, a compile-time `int`.
+
+### FFI
+
+- `extern "C" name(params) -> ret;` declares a C function resolved at link
+  time. A trailing `...` makes it varargs; a call then takes at least the fixed
+  parameters. A struct crosses to an extern only by `ptr<S>`, never by value.
+- At the C ABI boundary a JOCKY `bool` is a 4-byte int (Win32 `BOOL`).
+- `link "name";` adds `-lname` to the link; the `jocky build` command also takes
+  `-l <name>` / `-lname` and `-L <dir>` / `-Ldir`. `kernel32` and the C runtime
+  are linked by the `clang` driver already; `ntdll`, `dbghelp`, etc. must be
+  named.
 
 A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
 like any other array.

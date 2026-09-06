@@ -70,13 +70,21 @@ bool link(llvm::ArrayRef<std::string> objectFiles, llvm::StringRef outputPath,
         return false;
     }
 
-    // clang <objs> -o <out> -fuse-ld=lld
+    // Backing storage for the `-L` / `-l` tokens (args below holds StringRefs).
+    std::vector<std::string> flagStorage;
+    flagStorage.reserve(options.libSearchPaths.size() + options.libs.size());
+    for (const std::string &p : options.libSearchPaths)
+        flagStorage.push_back("-L" + p);
+    for (const std::string &l : options.libs) flagStorage.push_back("-l" + l);
+
+    // clang <objs> -o <out> -fuse-ld=lld [-L...] [-l...]
     llvm::SmallVector<llvm::StringRef, 16> args;
     args.push_back(clang);
     for (const std::string &obj : objectFiles) args.push_back(obj);
     args.push_back("-o");
     args.push_back(outputPath);
     args.push_back("-fuse-ld=lld");
+    for (const std::string &f : flagStorage) args.push_back(f);
 
     if (options.verbose) {
         llvm::errs() << "jocky: linking:";

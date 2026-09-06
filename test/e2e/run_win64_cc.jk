@@ -1,0 +1,30 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%s" -o "%t.exe"
+// RUN: "%t.exe" | %FileCheck "%s"
+//
+// L2.3: a call with more than four mixed integer/pointer arguments (so some go
+// in rcx/rdx/r8/r9 and the rest on the stack) reads back the right values.
+// MultiByteToWideChar(CodePage, Flags, mbStr, mbLen, wideStr, wideLen).
+
+extern "C" MultiByteToWideChar(cp: u32, flags: u32, src: ptr<char>,
+                               srcLen: i32, dst: rawptr, dstLen: i32) -> i32;
+
+var s = "abcd";                       // 4 chars + NUL
+
+// dstLen 0 -> return the required wide-char count including the NUL.
+var need = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32, null, 0i32);
+print(need);                          // 5
+
+var wbuf: u16[8];
+var got = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32,
+                              &wbuf[0] as rawptr, 8i32);
+print(got);                           // 5
+print(wbuf[0] as int);                // 97  ('a')
+print(wbuf[3] as int);                // 100 ('d')
+print(wbuf[4] as int);                // 0   (NUL)
+
+// CHECK:      5
+// CHECK-NEXT: 5
+// CHECK-NEXT: 97
+// CHECK-NEXT: 100
+// CHECK-NEXT: 0

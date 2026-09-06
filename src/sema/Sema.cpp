@@ -23,9 +23,11 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/StringSet.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/ADT/Twine.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -43,6 +45,8 @@ using ast::Type;
 struct FnSig {
     llvm::SmallVector<Type, 4> params;
     Type ret;
+    bool isExtern = false;
+    bool isVarArg = false;
 };
 
 class Checker {
@@ -51,6 +55,9 @@ public:
         : module_(module), diags_(diags) {}
 
     bool run() {
+        for (ast::StructDecl *s : module_.structs) registerStruct(*s);
+        for (ast::StructDecl *s : module_.structs) layoutStruct(*s);
+        for (ast::ExternDecl *e : module_.externs) declareExtern(*e);
         for (ast::FunctionDecl *fn : module_.functions) declareFunction(*fn);
         for (ast::FunctionDecl *fn : module_.functions) checkFunctionBody(*fn);
         checkImplicitMain();
@@ -72,8 +79,72 @@ private:
         diags_.error(loc, message);
     }
 
+    static unsigned alignUp(unsigned n, unsigned a) {
+        return a <= 1 ? n : (n + a - 1) / a * a;
+    }
+
+    // --- structs (L2.2) ----------------------------------------
+    void registerStruct(const ast::StructDecl &s) {
+        if (structs_.count(s.name)) {
+            err(s.loc, llvm::Twine("struct '") + s.name +
+                           "' is defined more than once");
+            return;
+        }
+        auto si = std::make_shared<ast::StructInfo>();
+        si->name = s.name;
+        structs_[s.name] = std::move(si);
+        structDecls_[s.name] = const_cast<ast::StructDecl *>(&s);
+        structState_[s.name] = 0;
+    }
+
+    // Ensure `name`'s layout is computed; report a cycle if it is mid-layout.
+    void ensureLaidOut(llvm::StringRef name, SourceLocation useLoc) {
+        auto st = structState_.find(name);
+        if (st == structState_.end()) return;  // not a struct / registration failed
+        if (st->second == 2) return;
+        if (st->second == 1) {
+            err(useLoc, llvm::Twine("struct '") + name +
+                            "' contains itself by value (use ptr<" + name +
+                            "> for a self-reference)");
+            return;
+        }
+        layoutStruct(*structDecls_[name]);
+    }
+
+    void layoutStruct(const ast::StructDecl &s) {
+        auto st = structState_.find(s.name);
+        if (st == structState_.end() || st->second != 0) return;
+        st->second = 1;
+
+        ast::StructInfo &si = *structs_[s.name];
+        unsigned offset = 0, align = 1;
+        llvm::StringSet<> seen;
+        for (const ast::FieldDecl &f : s.fields) {
+            if (!seen.insert(f.name).second) {
+                err(f.loc, llvm::Twine("duplicate field '") + f.name +
+                               "' in struct '" + s.name + "'");
+                continue;
+            }
+            Type ft = resolveType(f.typeAnnotation, /*completeStructs=*/true);
+            if (ft.isVoid()) {
+                err(f.typeAnnotation->loc, "a struct field cannot have type "
+                                           "'void'");
+                ft = Type::error();
+            }
+            const unsigned fa = ft.isError() ? 1 : ft.alignOf();
+            offset = alignUp(offset, fa);
+            si.fields.push_back(ast::FieldInfo{f.name, ft, offset});
+            if (!ft.isError())
+                offset += static_cast<unsigned>(ft.byteSize());
+            align = std::max(align, fa);
+        }
+        si.align = align;
+        si.size = alignUp(offset, align);
+        st->second = 2;
+    }
+
     // type res
-    Type resolveType(const ast::TypeExpr *te) {
+    Type resolveType(const ast::TypeExpr *te, bool completeStructs = true) {
         switch (te->form) {
         case ast::TypeExpr::Form::Name:
             break;
@@ -103,7 +174,9 @@ private:
             return Type::array(elem, static_cast<unsigned>(n));
         }
         case ast::TypeExpr::Form::Pointer: {
-            Type pointee = resolveType(te->element);
+            // A pointee never needs a complete layout: `ptr<S>` is 8 bytes even
+            // while `S` is mid-layout (this is how a struct self-references).
+            Type pointee = resolveType(te->element, /*completeStructs=*/false);
             if (pointee.isError()) return Type::error();
             if (pointee.isVoid()) {
                 err(te->loc, "use 'rawptr', not 'ptr<void>'");
@@ -130,9 +203,15 @@ private:
                            .Case("double", Type::f64())
                            .Case("rawptr", Type::rawPtr())
                            .Default(Type::error());
-        if (t.isError())
-            err(te->loc, llvm::Twine("unknown type '") + te->name + "'");
-        return t;
+        if (!t.isError()) return t;
+
+        if (auto sit = structs_.find(te->name); sit != structs_.end()) {
+            if (completeStructs) ensureLaidOut(te->name, te->loc);
+            return Type::structType(sit->second);
+        }
+
+        err(te->loc, llvm::Twine("unknown type '") + te->name + "'");
+        return Type::error();
     }
 
     // A minimal compile-time evaluator for an array length: integer literals,
@@ -153,6 +232,16 @@ private:
             const Type m = resolveType(s.typeArg);
             if (m.isError() || m.byteSize() == 0) return false;
             out = m.byteSize();
+            return true;
+        }
+        case ast::NodeKind::OffsetofExpr: {
+            const auto &o = static_cast<const ast::OffsetofExpr &>(e);
+            auto sit = structs_.find(o.structName);
+            if (sit == structs_.end()) return false;
+            ensureLaidOut(o.structName, o.loc);
+            const ast::FieldInfo *f = sit->second->find(o.fieldName);
+            if (!f) return false;
+            out = f->offset;
             return true;
         }
         case ast::NodeKind::CastExpr:
@@ -201,6 +290,9 @@ private:
         if (from.isPointer() && to.isPointer()) return true;
         if (from.isPointer() && to.isInteger()) return true;
         if (from.isInteger() && to.isPointer()) return true;
+        // An array or slice `as` a pointer yields its base address, so a struct
+        // can be overlaid on a byte buffer: `(buf as ptr<Header>).field` (L1.6).
+        if ((from.isArray() || from.isSlice()) && to.isPointer()) return true;
         const bool fromScalar = from.isNumeric() || from.isBool();
         const bool toScalar = to.isNumeric() || to.isBool();
         return fromScalar && toScalar;
@@ -318,6 +410,46 @@ private:
         functions_[fn.name] = std::move(sig);
     }
 
+    void declareExtern(ast::ExternDecl &e) {
+        if (functions_.count(e.name)) {
+            err(e.loc, llvm::Twine("'") + e.name + "' is declared more than once");
+            return;
+        }
+        FnSig sig;
+        sig.isExtern = true;
+        sig.isVarArg = e.isVarArg;
+        for (ast::Param &p : e.params) {
+            if (!p.typeAnnotation) {
+                err(p.loc,
+                    llvm::Twine("parameter '") + p.name + "' needs a type");
+                p.type = Type::error();
+            } else {
+                p.type = resolveType(p.typeAnnotation);
+                if (p.type.isVoid()) {
+                    err(p.typeAnnotation->loc,
+                        "an extern parameter cannot have type 'void'");
+                    p.type = Type::error();
+                }
+                if (p.type.isStruct()) {
+                    err(p.typeAnnotation->loc,
+                        llvm::Twine("pass a struct to an extern by pointer "
+                                    "('ptr<") +
+                            p.type.name() + ">'), not by value");
+                    p.type = Type::error();
+                }
+            }
+            sig.params.push_back(p.type);
+        }
+        e.resolvedReturn =
+            e.returnType ? resolveType(e.returnType) : Type::intTy();
+        if (e.resolvedReturn.isStruct()) {
+            err(e.loc, "an extern cannot return a struct by value");
+            e.resolvedReturn = Type::error();
+        }
+        sig.ret = e.resolvedReturn;
+        functions_[e.name] = std::move(sig);
+    }
+
     // pass 2: bodies
     void checkFunctionBody(ast::FunctionDecl &fn) {
         locals_.clear();
@@ -425,12 +557,19 @@ private:
                     " (add an explicit `as " + targetT.name() + "`)");
     }
 
-    // A storable location: a variable, an array/slice element, or the target of
-    // a dereference (`*p = v`).
+    // A storable location: a variable, an array/slice element, `*p`, or a struct
+    // field (of a struct value or through a `ptr<S>`).
     static bool isLValue(const ast::Expr &e) {
-        return e.kind == ast::NodeKind::VarRefExpr ||
-               e.kind == ast::NodeKind::IndexExpr ||
-               e.kind == ast::NodeKind::DerefExpr;
+        if (e.kind == ast::NodeKind::VarRefExpr ||
+            e.kind == ast::NodeKind::IndexExpr ||
+            e.kind == ast::NodeKind::DerefExpr)
+            return true;
+        if (e.kind == ast::NodeKind::MemberExpr) {
+            const Type bt = static_cast<const ast::MemberExpr &>(e).base->type;
+            return bt.isStruct() ||
+                   (bt.isTypedPointer() && bt.pointee().isStruct());
+        }
+        return false;
     }
 
     void checkReturn(ast::ReturnStmt &r) {
@@ -544,6 +683,8 @@ private:
             return checkDeref(static_cast<ast::DerefExpr &>(e));
         case ast::NodeKind::SizeofExpr:
             return checkSizeof(static_cast<ast::SizeofExpr &>(e));
+        case ast::NodeKind::OffsetofExpr:
+            return checkOffsetof(static_cast<ast::OffsetofExpr &>(e));
         default:
             err(e.loc, "internal: unexpected expression kind in sema");
             return Type::error();
@@ -621,16 +762,48 @@ private:
     Type checkMember(ast::MemberExpr &e) {
         const Type baseT = checkExpr(*e.base);
         if (baseT.isError()) return Type::error();
-        if (e.member != "len") {
-            err(e.loc, llvm::Twine("type ") + baseT.name() + " has no member '" +
-                           e.member + "'");
-            return Type::error();
+
+        // A `ptr<S>` auto-dereferences for field access (the L1.6 overlay).
+        Type recT = baseT;
+        if (baseT.isTypedPointer() && baseT.pointee().isStruct())
+            recT = baseT.pointee();
+
+        if (recT.isStruct()) {
+            const ast::FieldInfo *f = recT.structInfo().find(e.member);
+            if (!f) {
+                err(e.loc, llvm::Twine("struct '") + recT.name() +
+                               "' has no field '" + e.member + "'");
+                return Type::error();
+            }
+            return f->type;
         }
-        if (!baseT.isArray() && !baseT.isSlice()) {
+
+        if (e.member == "len") {
+            if (baseT.isArray() || baseT.isSlice()) return Type::intTy();
             err(e.loc, llvm::Twine("'.len' needs an array or a slice, not ") +
                            baseT.name());
             return Type::error();
         }
+
+        err(e.loc, llvm::Twine("type ") + baseT.name() + " has no member '" +
+                       e.member + "'");
+        return Type::error();
+    }
+
+    Type checkOffsetof(ast::OffsetofExpr &e) {
+        auto sit = structs_.find(e.structName);
+        if (sit == structs_.end()) {
+            err(e.loc, llvm::Twine("unknown struct '") + e.structName + "'");
+            return Type::error();
+        }
+        ensureLaidOut(e.structName, e.loc);
+        const ast::FieldInfo *f = sit->second->find(e.fieldName);
+        if (!f) {
+            err(e.loc, llvm::Twine("struct '") + e.structName +
+                           "' has no field '" + e.fieldName + "'");
+            return Type::error();
+        }
+        e.resolvedOffset = f->offset;
         return Type::intTy();
     }
 
@@ -852,8 +1025,12 @@ private:
         }
 
         const FnSig &sig = it->second;
-        if (sig.params.size() != c.args.size()) {
+        const bool countOk = sig.isVarArg
+                                 ? c.args.size() >= sig.params.size()
+                                 : c.args.size() == sig.params.size();
+        if (!countOk) {
             err(c.loc, llvm::Twine("function '") + c.callee + "' expects " +
+                           (sig.isVarArg ? "at least " : "") +
                            llvm::Twine(sig.params.size()) + " argument(s) but " +
                            llvm::Twine(c.args.size()) + " were given");
             for (ast::Expr *a : c.args) checkExpr(*a);
@@ -862,6 +1039,7 @@ private:
 
         for (std::size_t i = 0; i < c.args.size(); ++i) {
             const Type at = checkExpr(*c.args[i]);
+            if (i >= sig.params.size()) continue;  // a varargs `...` argument
             const Type pt = sig.params[i];
             if (!at.isError() && !pt.isError() && !coerce(c.args[i], pt))
                 err(c.args[i]->loc,
@@ -897,6 +1075,12 @@ private:
     llvm::StringMap<FnSig> functions_;
     llvm::StringMap<Type> locals_;  // reset per function
     Type currentReturn_;
+
+    // Struct declarations, resolved once up front. `structState_`: 0 pending,
+    // 1 being laid out (a cycle if we see it again), 2 done.
+    llvm::StringMap<std::shared_ptr<ast::StructInfo>> structs_;
+    llvm::StringMap<ast::StructDecl *> structDecls_;
+    llvm::StringMap<int> structState_;
 };
 
 }  // namespace

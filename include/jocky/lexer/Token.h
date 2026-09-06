@@ -31,11 +31,14 @@ enum class TokenKind {
     KwElse,
     KwWhile,
     KwReturn,
+    KwStruct,
+    KwExtern,
     KwAs,     // the `expr as Type` cast operator
     KwTrue,
     KwFalse,
-    KwNull,     // the null-pointer literal
-    KwSizeof,   // sizeof(T) / sizeof(expr)
+    KwNull,       // the null-pointer literal
+    KwSizeof,     // sizeof(T) / sizeof(expr)
+    KwOffsetof,   // offsetof(Struct, field)
 
     // punctuations
     LParen,     // (
