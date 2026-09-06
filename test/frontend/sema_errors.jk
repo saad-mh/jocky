@@ -8,7 +8,7 @@
 func dup() { return 1; }
 func dup() { return 2; }
 
-func takesTwo(a, b) { return a + b; }
+func takesTwo(a: int, b: int) -> int { return a + b; }
 
 var s = "not allowed here";
 print(undefinedVar);

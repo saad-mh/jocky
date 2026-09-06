@@ -1,0 +1,34 @@
+// RUN: %jocky lex --dump-tokens "%s" | %FileCheck "%s"
+//
+// The L0 literal forms: hex integers, type-suffixed integers, floating-point
+// (with and without an `f` suffix), character literals, and the `true` /
+// `false` / `as` keywords, plus the `:` and `->` punctuation.
+
+var hex   = 0xDEAD;
+var sized = 42u32;
+var small = 7i8;
+var real  = 3.5;
+var frac  = .5e-3f;
+var sci   = 1e10;
+var ch    = '\n';
+var yes   = true;
+var no    = false;
+
+func f(p: int) -> bool {
+    return (p as u8) as bool;
+}
+
+// CHECK:      7:13: IntLiteral '0xDEAD' int=57005
+// CHECK:      8:13: IntLiteral '42u32' int=42 suffix=u32
+// CHECK:      9:13: IntLiteral '7i8' int=7 suffix=i8
+// CHECK:      10:13: FloatLiteral '3.5' float={{[0-9.e+-]+}}
+// CHECK:      11:13: FloatLiteral '.5e-3f' float={{[0-9.e+-]+}} f32
+// CHECK:      12:13: FloatLiteral '1e10' float={{[0-9.e+-]+}}
+// CHECK:      13:13: CharLiteral {{.*}} char=10
+// CHECK:      14:13: KwTrue 'true'
+// CHECK:      15:13: KwFalse 'false'
+// CHECK:      17:1: KwFunc 'func'
+// CHECK:      17:8: Identifier 'p'
+// CHECK-NEXT: 17:9: Colon ':'
+// CHECK:      17:16: Arrow '->'
+// CHECK:      18:15: KwAs 'as'

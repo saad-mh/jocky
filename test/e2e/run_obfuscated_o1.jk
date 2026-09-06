@@ -6,7 +6,7 @@
 // RUN: %jocky build -O1 --obfuscate --obf-seed 88 "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-func sum_to(n) {
+func sum_to(n: int) -> int {
     var acc = 0;
     var i = 1;
     while (i <= n) {
@@ -16,7 +16,7 @@ func sum_to(n) {
     return acc;
 }
 
-func fib(n) {
+func fib(n: int) -> int {
     if (n < 2) {
         return n;
     }

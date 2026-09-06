@@ -1,6 +1,6 @@
 // RUN: %jocky build --emit-llvm "%s" | %FileCheck "%s"
 
-func max(a, b) {
+func max(a: int, b: int) -> int {
     if (a < b) {
         return b;
     } else {

@@ -124,11 +124,13 @@ ast::FunctionDecl *Parser::parseFunctionDecl() {
             p.name = current().spelling.str();
             p.loc = current().location;
             advance();
-            if (!expect(TokenKind::Colon,
-                        "':' and a type after the parameter name"))
-                return nullptr;
-            p.typeAnnotation = parseType();
-            if (!p.typeAnnotation) return nullptr;
+            // The type annotation is optional in the grammar so that a missing
+            // one is a semantic diagnostic ("parameter 'p' needs a type"), not a
+            // parse error.
+            if (match(TokenKind::Colon)) {
+                p.typeAnnotation = parseType();
+                if (!p.typeAnnotation) return nullptr;
+            }
             fn->params.push_back(std::move(p));
             if (!match(TokenKind::Comma)) break;
         }

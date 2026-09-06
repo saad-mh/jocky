@@ -47,17 +47,25 @@ public:
     // diags.hasErrors() and discard the result if anything was reported.
     std::unique_ptr<llvm::Module> lowerModule(const ast::Module &program);
 
+    // A local variable: its stack slot plus the JOCKY type stored in it.
+    struct Local {
+        llvm::AllocaInst *slot = nullptr;
+        ast::Type type;
+    };
+
 private:
     // --- helpers for common types / constants ---
     llvm::IntegerType *i64Ty();
     llvm::PointerType *ptrTy();  // opaque pointer
     llvm::ConstantInt *i64(std::int64_t v);
+    llvm::Type *llvmType(ast::Type t);
+    llvm::Value *zeroValue(ast::Type t);
 
     // --- declarations ---
     void declareFunction(const ast::FunctionDecl &fn);
     void declareImplicitMain();
     llvm::Function *getOrDeclarePrintf();
-    llvm::Constant *internFormat(bool forString);
+    llvm::Constant *internFormat(llvm::StringRef text, llvm::StringRef name);
     llvm::Constant *internCString(llvm::StringRef bytes);
 
     // --- lowering ---
@@ -67,14 +75,19 @@ private:
     void lowerStmt(const ast::Stmt &stmt);
     void lowerIf(const ast::IfStmt &stmt);
     void lowerWhile(const ast::WhileStmt &stmt);
+    void emitDefaultReturn();  // the `ret` for a fell-through function body
 
-    llvm::Value *lowerExpr(const ast::Expr &expr);       // -> i64 (or null on error)
+    llvm::Value *lowerExpr(const ast::Expr &expr);  // value has type expr.type
     llvm::Value *lowerBinary(const ast::BinaryExpr &e);
     llvm::Value *lowerCall(const ast::CallExpr &e);
-    llvm::Value *lowerCondition(const ast::Expr &e);     // -> i1 (or null on error)
+    llvm::Value *lowerPrint(const ast::Expr &arg);
+    llvm::Value *lowerConversion(const ast::Expr &expr);  // Cast / ImplicitConversion
+    llvm::Value *emitConvert(llvm::Value *v, ast::Type from, ast::Type to);
+    llvm::Value *lowerCondition(const ast::Expr &e);  // -> i1 (or null on error)
 
-    llvm::AllocaInst *createEntryAlloca(llvm::Function *fn, llvm::StringRef name);
-    llvm::AllocaInst *lookupLocal(llvm::StringRef name);
+    llvm::AllocaInst *createEntryAlloca(llvm::Function *fn, llvm::StringRef name,
+                                        llvm::Type *type);
+    Local *lookupLocal(llvm::StringRef name);
 
     // Reports a user error. Lowering then continues where it safely can (via
     // null Values propagating up); the driver discards the module afterwards
@@ -87,12 +100,12 @@ private:
     llvm::IRBuilder<> builder_;
 
     llvm::StringMap<llvm::Function *> functions_;
-    llvm::StringMap<llvm::AllocaInst *> locals_;  // reset per function
+    llvm::StringMap<Local> locals_;  // reset per function
+    ast::Type currentReturn_;        // return type of the function being lowered
 
     llvm::Function *mainFn_ = nullptr;  // the implicit main
     llvm::Function *printfFn_ = nullptr;
-    llvm::Constant *intFormat_ = nullptr;
-    llvm::Constant *strFormat_ = nullptr;
+    llvm::StringMap<llvm::Constant *> formats_;  // printf format strings, by name
 };
 
 }  // namespace codegen

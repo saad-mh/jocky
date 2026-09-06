@@ -5,7 +5,7 @@
 // RUN: %jocky build --obfuscate=flatten --obf-seed 7 "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-func collatz(n) {
+func collatz(n: int) -> int {
     var steps = 0;
     while (n != 1) {
         if (n % 2 == 0) {

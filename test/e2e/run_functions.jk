@@ -2,18 +2,18 @@
 // RUN: %jocky build "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-func add(a, b) {
+func add(a: int, b: int) -> int {
     return a + b;
 }
 
-func max(a, b) {
+func max(a: int, b: int) -> int {
     if (a > b) {
         return a;
     }
     return b;
 }
 
-func square(n) {
+func square(n: int) -> int {
     return n * n;
 }
 

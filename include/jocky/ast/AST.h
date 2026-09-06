@@ -60,6 +60,12 @@ enum class BinaryOp {
 const char *unaryOpName(UnaryOp op);
 const char *binaryOpName(BinaryOp op);
 
+// The operator's source spelling ("+", "==", ...), for diagnostics.
+const char *binaryOpSymbol(BinaryOp op);
+
+// True for == != < <= > >= (the ops that yield `bool`).
+bool isComparison(BinaryOp op);
+
 // --- Base -------------------------------------------------------------
 
 struct Node {
