@@ -32,7 +32,7 @@ milestone plan.
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
     keywords   func  var  if  else  while  return  as  true  false
-    symbols    ( ) { } , : ; ->  =  + - * / %  == !=  < <= > >=
+    symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  == !=  < <= > >=
 
 `//` starts a comment that runs to the end of the line. Whitespace separates
 tokens and is otherwise ignored. `print` is **not** a keyword - it is an
@@ -47,8 +47,10 @@ ordinary identifier that codegen treats as a builtin.
     param        := IDENT (':' type)?          // the annotation is required
                                                // semantically; a missing one is
                                                // a sema error, not a parse error
-    type         := IDENT                       // a type name; array / pointer
-                                               // forms arrive in later milestones
+    type         := IDENT ('[' expr ']' | '[' ']')*
+                                               // IDENT is a type name; `[expr]`
+                                               // is a fixed array (expr must fold
+                                               // to a constant), `[]` a slice
 
     block        := '{' statement* '}'
 
@@ -60,8 +62,12 @@ ordinary identifier that codegen treats as a builtin.
                   | assignStmt
                   | exprStmt
 
-    varDecl      := 'var' IDENT (':' type)? '=' expr ';'
-    assignStmt   := IDENT '=' expr ';'          // chosen when '=' follows the name
+    varDecl      := 'var' IDENT (':' type)? ('=' expr)? ';'
+                                               // the initializer may be omitted
+                                               // only when a type is given
+    assignStmt   := lvalue '=' expr ';'        // chosen when '=' follows a full
+                                               // expression; lvalue is a name or
+                                               // an index
     exprStmt     := expr ';'
     ifStmt       := 'if' '(' expr ')' block ('else' (block | ifStmt))?
     whileStmt    := 'while' '(' expr ')' block
@@ -73,19 +79,23 @@ ordinary identifier that codegen treats as a builtin.
     additive       := multiplicative (('+' | '-') multiplicative)*
     multiplicative := cast (('*' | '/' | '%') cast)*
     cast           := unary ('as' type)*
-    unary          := '-' unary | primary
+    unary          := '-' unary | postfix
+    postfix        := primary ('[' expr ']' | '[' expr? ':' expr? ']' | '.' IDENT)*
+                                               // element index, sub-slice, `.len`
     primary        := INT
                     | FLOAT
                     | CHAR
                     | STRING
                     | 'true' | 'false'
+                    | '[' (expr (',' expr)*)? ']'   // an array literal
                     | IDENT
                     | IDENT '(' argList? ')'    // a call
                     | '(' expr ')'
     argList        := expr (',' expr)*
 
 Binary operators are left-associative. Precedence, lowest to highest:
-`== !=`  <  `< <= > >=`  <  `+ -`  <  `* / %`  <  `as`  <  unary `-`.
+`== !=`  <  `< <= > >=`  <  `+ -`  <  `* / %`  <  `as`  <  unary `-`  <
+postfix `[]` / `.`.
 
 ## Semantics
 
@@ -99,6 +109,16 @@ Binary operators are left-associative. Precedence, lowest to highest:
 - `i8 i16 i32 i64` / `u8 u16 u32 u64` - sized integers. `u*` arithmetic,
   comparison, and `print` are unsigned. `int` is `i64`; `char` is `u8`.
 - `void` - only as a function result (`-> void`).
+- `T[N]` - a fixed array: `N` contiguous `T`s, `N` a compile-time constant.
+  `arr[i]` indexes it (no bounds check), `arr.len` is `N`, `[a, b, c]` is a
+  literal. `var buf: T[N];` allocates without initializing.
+- `T[]` - a slice: a borrowed `{ base, len }` view. A `T[N]` becomes a `T[]`
+  when passed or assigned where a slice is wanted; `arr[a:b]` makes a sub-slice
+  (either bound may be omitted). `s.len` is the element count. A slice variable
+  must be initialized.
+
+A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
+like any other array.
 
 A bare integer literal has no fixed type: it takes whatever its context needs,
 as long as its value fits (so `var x: u8 = 200;` and `(0 as u64) - 1` are fine).
@@ -124,11 +144,9 @@ A literal with a suffix, and every other expression, has one definite type.
 - Local variables infer their type from the initializer unless annotated;
   `var x: T = e` requires `e` to be assignable to `T`.
 - Functions may be called before they appear in the file. `print` takes exactly
-  one argument and picks its format from the argument's type. Top-level
-  statements form an implicit `main` that returns `int` (the exit code);
-  declaring `main` yourself is an error.
-- Strings: a string literal may still only be passed directly to `print` (a
-  first-class `char[]` string arrives with arrays, L0.6/L0.7).
+  one argument and picks its format from the argument's type (a `char[N]` /
+  `char[]` prints as a string). Top-level statements form an implicit `main`
+  that returns `int` (the exit code); declaring `main` yourself is an error.
 
 ### Pipeline
 

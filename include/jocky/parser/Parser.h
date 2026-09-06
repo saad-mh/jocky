@@ -50,6 +50,7 @@ private:
     ast::Expr *parseMultiplicative();
     ast::Expr *parseCast();
     ast::Expr *parseUnary();
+    ast::Expr *parsePostfix();
     ast::Expr *parsePrimary();
 
     // --- token cursor ---

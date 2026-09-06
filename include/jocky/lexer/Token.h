@@ -40,6 +40,9 @@ enum class TokenKind {
     RParen,     // )
     LBrace,     // {
     RBrace,     // }
+    LBracket,   // [
+    RBracket,   // ]
+    Dot,        // .
     Comma,      // ,
     Colon,      // :
     Arrow,      // ->

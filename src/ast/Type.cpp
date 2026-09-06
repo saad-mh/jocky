@@ -17,6 +17,10 @@ std::string Type::name() const {
         return (isSigned ? "i" : "u") + std::to_string(bits);
     case TypeKind::Float:
         return bits == 32 ? "float" : "double";
+    case TypeKind::Array:
+        return element->name() + "[" + std::to_string(length) + "]";
+    case TypeKind::Slice:
+        return element->name() + "[]";
     }
     return "<error>";
 }

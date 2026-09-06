@@ -65,9 +65,11 @@ A small static type system - `int` (64-bit, the default), `char` (`u8`, the
 byte type), `bool`, `double` / `float`, and the sized aliases `i8`..`i64` /
 `u8`..`u64` - with literals (`0x2A`, `42u32`, `3.14f`, `'A'`, `true`), `expr as
 T` casts, widening-only implicit conversions, and type-directed `print`.
-Functions annotate their parameters (`func f(a: int) -> bool`); locals infer
-their type. Variables, `if` / `else`, `while`, arithmetic / comparison / cast
-operators. Top-level statements run as an implicit `main`.
+Fixed arrays `T[N]` and borrowed slices `T[]` (`arr[i]`, `arr[a:b]`, `arr.len`,
+`[1, 2, 3]`); a string literal is a NUL-terminated `char[]`. Functions annotate
+their parameters (`func f(a: int) -> bool`); locals infer their type.
+Variables, `if` / `else`, `while`, arithmetic / comparison / cast operators.
+Top-level statements run as an implicit `main`.
 
 The full grammar is in [docs/grammar.md](docs/grammar.md). The compiler's
 internal structure is in [docs/architecture.md](docs/architecture.md), and the

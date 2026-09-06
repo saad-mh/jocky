@@ -74,6 +74,36 @@ private:
 
     // type res
     Type resolveType(const ast::TypeExpr *te) {
+        switch (te->form) {
+        case ast::TypeExpr::Form::Name:
+            break;
+        case ast::TypeExpr::Form::Slice: {
+            Type elem = resolveType(te->element);
+            if (elem.isError()) return Type::error();
+            if (elem.isVoid()) {
+                err(te->loc, "a slice element cannot be 'void'");
+                return Type::error();
+            }
+            return Type::slice(elem);
+        }
+        case ast::TypeExpr::Form::Array: {
+            Type elem = resolveType(te->element);
+            std::uint64_t n = 0;
+            const bool okN = constUint(*te->sizeExpr, n);
+            if (elem.isError()) return Type::error();
+            if (elem.isVoid()) {
+                err(te->loc, "an array element cannot be 'void'");
+                return Type::error();
+            }
+            if (!okN) {
+                err(te->sizeExpr->loc,
+                    "array length must be a constant non-negative integer");
+                return Type::error();
+            }
+            return Type::array(elem, static_cast<unsigned>(n));
+        }
+        }
+
         const Type t = llvm::StringSwitch<Type>(te->name)
                            .Case("void", Type::voidTy())
                            .Case("bool", Type::boolTy())
@@ -95,6 +125,38 @@ private:
         return t;
     }
 
+    // A minimal compile-time evaluator for an array length: integer literals
+    // and `+ - * / %` over them, plus parenthesised / cast forms. Enough for
+    // `char[4096]`, `int[N*2]`. Returns false if `e` is not foldable or is
+    // negative.
+    static bool constUint(const ast::Expr &e, std::uint64_t &out) {
+        switch (e.kind) {
+        case ast::NodeKind::IntLiteralExpr: {
+            const auto &n = static_cast<const ast::IntLiteralExpr &>(e);
+            if (n.value < 0) return false;
+            out = static_cast<std::uint64_t>(n.value);
+            return true;
+        }
+        case ast::NodeKind::CastExpr:
+            return constUint(*static_cast<const ast::CastExpr &>(e).operand, out);
+        case ast::NodeKind::BinaryExpr: {
+            const auto &b = static_cast<const ast::BinaryExpr &>(e);
+            std::uint64_t l = 0, r = 0;
+            if (!constUint(*b.lhs, l) || !constUint(*b.rhs, r)) return false;
+            switch (b.op) {
+            case ast::BinaryOp::Add: out = l + r; return true;
+            case ast::BinaryOp::Sub: if (r > l) return false; out = l - r; return true;
+            case ast::BinaryOp::Mul: out = l * r; return true;
+            case ast::BinaryOp::Div: if (r == 0) return false; out = l / r; return true;
+            case ast::BinaryOp::Mod: if (r == 0) return false; out = l % r; return true;
+            default: return false;
+            }
+        }
+        default:
+            return false;
+        }
+    }
+
     // Widening conversions the language performs without a cast.
     static bool implicitlyConvertible(Type from, Type to) {
         if (from.isError() || to.isError()) return true;  // suppress cascades
@@ -106,6 +168,11 @@ private:
         if (from == Type::intTy() && to == Type::f64()) return true;
         if (from == Type::f32() && to == Type::f64()) return true;
         return false;
+    }
+
+    // A `char[N]` or `char[]` - what `print` renders as a string.
+    static bool isCharSequence(Type t) {
+        return (t.isArray() || t.isSlice()) && t.elem() == Type::charTy();
     }
 
     // What `expr as T` accepts: any scalar to any other scalar.
@@ -168,6 +235,16 @@ private:
         if (slot->type.isError() || to.isError() || slot->type == to)
             return true;
         if (adaptIntLiteral(*slot, to)) return true;  // literal becomes type `to`
+
+        // A `T[N]` decays to a `T[]` (same element type).
+        if (slot->type.isArray() && to.isSlice() &&
+            slot->type.elem() == to.elem()) {
+            auto *decay = make<ast::ArrayToSliceExpr>(slot->loc, slot);
+            decay->type = to;
+            slot = decay;
+            return true;
+        }
+
         if (!implicitlyConvertible(slot->type, to)) return false;
         auto *conv = make<ast::ImplicitConversionExpr>(slot->loc, slot);
         conv->type = to;
@@ -262,14 +339,29 @@ private:
     }
 
     void checkVarDecl(ast::VarDeclStmt &v) {
-        const Type initT = checkExpr(*v.init);
-
+        Type ann = Type::error();
         if (v.typeAnnotation) {
-            Type ann = resolveType(v.typeAnnotation);
+            ann = resolveType(v.typeAnnotation);
             if (ann.isVoid()) {
                 err(v.typeAnnotation->loc, "a variable cannot have type 'void'");
                 ann = Type::error();
             }
+        }
+
+        if (!v.init) {
+            // `var buf: char[4096];` - annotated, storage left unset. A slice is
+            // a borrowed view, so it has nothing to leave unset.
+            if (ann.isSlice())
+                err(v.loc, llvm::Twine("a slice variable ('") + v.name +
+                               "') must be given an initializer");
+            v.declaredType = ann;
+            locals_[v.name] = v.declaredType;
+            return;
+        }
+
+        const Type initT = checkExpr(*v.init, ann);
+
+        if (v.typeAnnotation) {
             v.declaredType = ann;
             if (!ann.isError() && !initT.isError() && !coerce(v.init, ann))
                 err(v.init->loc,
@@ -288,19 +380,26 @@ private:
     }
 
     void checkAssign(ast::AssignStmt &a) {
-        const Type valT = checkExpr(*a.value);
-        auto it = locals_.find(a.name);
-        if (it == locals_.end()) {
-            err(a.loc, llvm::Twine("assignment to undeclared variable '") +
-                           a.name + "'");
+        const Type targetT = checkExpr(*a.target);
+        if (!isLValue(*a.target)) {
+            if (!targetT.isError())
+                err(a.target->loc, "the left side of '=' is not assignable");
+            checkExpr(*a.value);
             return;
         }
-        const Type varT = it->second;
-        if (!varT.isError() && !valT.isError() && !coerce(a.value, varT))
+
+        const Type valT = checkExpr(*a.value, targetT);
+        if (!targetT.isError() && !valT.isError() && !coerce(a.value, targetT))
             err(a.value->loc,
                 llvm::Twine("cannot assign a value of type ") + valT.name() +
-                    " to '" + a.name + "' of type " + varT.name() +
-                    " (add an explicit `as " + varT.name() + "`)");
+                    " to a target of type " + targetT.name() +
+                    " (add an explicit `as " + targetT.name() + "`)");
+    }
+
+    // A storable location: a variable, or an element of an array/slice.
+    static bool isLValue(const ast::Expr &e) {
+        return e.kind == ast::NodeKind::VarRefExpr ||
+               e.kind == ast::NodeKind::IndexExpr;
     }
 
     void checkReturn(ast::ReturnStmt &r) {
@@ -327,15 +426,15 @@ private:
                        t.name());
     }
 
-    // exprr
-    // `stringAllowed` is true only for the single direct argument of print(...).
-    Type checkExpr(ast::Expr &e, bool stringAllowed = false) {
-        const Type t = computeType(e, stringAllowed);
+    // `expected` is an optional hint from the context (a var's declared type, a
+    // parameter type, ...). Only array literals use it, to type their elements.
+    Type checkExpr(ast::Expr &e, Type expected = Type::error()) {
+        const Type t = computeType(e, expected);
         e.type = t;
         return t;
     }
 
-    Type computeType(ast::Expr &e, bool stringAllowed) {
+    Type computeType(ast::Expr &e, Type expected) {
         switch (e.kind) {
         case ast::NodeKind::IntLiteralExpr: {
             const auto &n = static_cast<const ast::IntLiteralExpr &>(e);
@@ -352,10 +451,13 @@ private:
         case ast::NodeKind::BoolLiteralExpr:
             return Type::boolTy();
         case ast::NodeKind::StringLiteralExpr:
-            if (!stringAllowed)
-                err(e.loc,
-                    "a string literal can only be passed directly to print(...)");
-            return Type::error();  // no first-class string type (yet)
+            // A string literal is a `char[len + 1]`, NUL-terminated (L0.7). It
+            // decays to `char[]` like any other array.
+            return Type::array(
+                Type::charTy(),
+                static_cast<unsigned>(
+                    static_cast<const ast::StringLiteralExpr &>(e).value.size() +
+                    1));
         case ast::NodeKind::VarRefExpr: {
             const auto &v = static_cast<const ast::VarRefExpr &>(e);
             auto it = locals_.find(v.name);
@@ -384,11 +486,105 @@ private:
         case ast::NodeKind::CastExpr:
             return checkCast(static_cast<ast::CastExpr &>(e));
         case ast::NodeKind::ImplicitConversionExpr:
+        case ast::NodeKind::ArrayToSliceExpr:
             return e.type;  // sema built it; the type is already right
+        case ast::NodeKind::ArrayLiteralExpr:
+            return checkArrayLiteral(static_cast<ast::ArrayLiteralExpr &>(e),
+                                     expected);
+        case ast::NodeKind::IndexExpr:
+            return checkIndex(static_cast<ast::IndexExpr &>(e));
+        case ast::NodeKind::SliceExpr:
+            return checkSlice(static_cast<ast::SliceExpr &>(e));
+        case ast::NodeKind::MemberExpr:
+            return checkMember(static_cast<ast::MemberExpr &>(e));
         default:
             err(e.loc, "internal: unexpected expression kind in sema");
             return Type::error();
         }
+    }
+
+    // `[a, b, c]`. With an array/slice `expected` type, each element is checked
+    // toward that element type; otherwise the first element sets it.
+    Type checkArrayLiteral(ast::ArrayLiteralExpr &lit, Type expected) {
+        if (lit.elements.empty()) {
+            if (expected.isArray() || expected.isSlice())
+                return Type::array(expected.elem(), 0);
+            err(lit.loc, "cannot infer the element type of an empty array "
+                         "literal (annotate the variable)");
+            return Type::error();
+        }
+
+        Type elemHint = Type::error();
+        if (expected.isArray() || expected.isSlice()) elemHint = expected.elem();
+
+        Type elemT = elemHint;
+        for (std::size_t i = 0; i < lit.elements.size(); ++i) {
+            const Type et = checkExpr(*lit.elements[i], elemHint);
+            if (et.isError()) return Type::error();
+            if (i == 0 && elemT.isError()) elemT = et;
+            if (!coerce(lit.elements[i], elemT)) {
+                err(lit.elements[i]->loc,
+                    llvm::Twine("array element ") + llvm::Twine(i) +
+                        " has type " + et.name() + " but " + elemT.name() +
+                        " was expected");
+                return Type::error();
+            }
+        }
+        return Type::array(elemT, static_cast<unsigned>(lit.elements.size()));
+    }
+
+    Type checkIndex(ast::IndexExpr &e) {
+        const Type baseT = checkExpr(*e.base);
+        const Type idxT = checkExpr(*e.index);
+        if (baseT.isError()) return Type::error();
+        if (!baseT.isArray() && !baseT.isSlice()) {
+            err(e.loc, llvm::Twine("cannot index a value of type ") +
+                           baseT.name());
+            return Type::error();
+        }
+        if (!idxT.isError() && !idxT.isInteger() &&
+            !adaptIntLiteral(*e.index, Type::intTy())) {
+            err(e.index->loc, llvm::Twine("an array index must be an integer, "
+                                          "not ") +
+                                  idxT.name());
+        }
+        coerce(e.index, Type::intTy());
+        return baseT.elem();
+    }
+
+    Type checkSlice(ast::SliceExpr &e) {
+        const Type baseT = checkExpr(*e.base);
+        if (e.lo) {
+            checkExpr(*e.lo);
+            coerce(e.lo, Type::intTy());
+        }
+        if (e.hi) {
+            checkExpr(*e.hi);
+            coerce(e.hi, Type::intTy());
+        }
+        if (baseT.isError()) return Type::error();
+        if (!baseT.isArray() && !baseT.isSlice()) {
+            err(e.loc, llvm::Twine("cannot slice a value of type ") +
+                           baseT.name());
+            return Type::error();
+        }
+        return Type::slice(baseT.elem());
+    }
+
+    Type checkMember(ast::MemberExpr &e) {
+        const Type baseT = checkExpr(*e.base);
+        if (baseT.isError()) return Type::error();
+        if (e.member != "len") {
+            err(e.loc, llvm::Twine("type ") + baseT.name() + " has no member '" +
+                           e.member + "'");
+            return Type::error();
+        }
+        if (!baseT.isArray() && !baseT.isSlice()) {
+            err(e.loc, llvm::Twine("'.len' needs an array or a slice, not ") +
+                           baseT.name());
+            return Type::error();
+        }
+        return Type::intTy();
     }
 
     Type checkBinary(ast::BinaryExpr &b) {
@@ -443,16 +639,13 @@ private:
                         llvm::Twine(c.args.size()));
                 return Type::intTy();
             }
-            ast::Expr &arg = *c.args[0];
-            if (arg.kind == ast::NodeKind::StringLiteralExpr) {
-                arg.type = Type::error();  // codegen formats it by node kind
-            } else {
-                const Type at = checkExpr(arg);
-                if (!at.isError() && !at.isNumeric() && !at.isBool())
-                    err(arg.loc, llvm::Twine("print cannot format a value of "
-                                             "type ") +
-                                     at.name());
-            }
+            const Type at = checkExpr(*c.args[0]);
+            const bool printable = at.isError() || at.isScalar() ||
+                                   isCharSequence(at);
+            if (!printable)
+                err(c.args[0]->loc,
+                    llvm::Twine("print cannot format a value of type ") +
+                        at.name());
             return Type::intTy();  // print(...) evaluates to 0
         }
 

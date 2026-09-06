@@ -32,6 +32,11 @@ enum class NodeKind {
     CallExpr,
     CastExpr,             // `expr as T` (written by the user)
     ImplicitConversionExpr,  // inserted by sema at an allowed widening
+    ArrayLiteralExpr,    // [a, b, c]
+    IndexExpr,           // base[i]
+    SliceExpr,           // base[lo:hi]
+    MemberExpr,          // base.member  (only `.len` for now)
+    ArrayToSliceExpr,    // inserted by sema where a T[N] decays to a T[]
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -159,12 +164,19 @@ struct CallExpr : Expr {
 };
 
 // The type written on the right of `expr as T`, on a parameter (`p: T`), or on a
-// `var` (`var x: T = ...`). Only a bare name for now; array / pointer / slice
-// forms arrive in later milestones. Sema resolves `name` to an `ast::Type`.
+// `var` (`var x: T = ...`). A bare name (`int`, `u32`), a fixed array
+// (`char[4096]`), or a slice (`char[]`). Sema resolves it to an `ast::Type`.
 struct TypeExpr : Node {
-    std::string name;
+    enum class Form { Name, Array, Slice };
+    Form form = Form::Name;
+    std::string name;             // Form::Name
+    TypeExpr *element = nullptr;  // Form::Array / Form::Slice: the element type
+    Expr *sizeExpr = nullptr;     // Form::Array: a constant-integer expression
+
     TypeExpr(SourceLocation l, std::string n)
         : Node(NodeKind::TypeExpr, l), name(std::move(n)) {}
+    TypeExpr(SourceLocation l, Form f, TypeExpr *elem, Expr *size)
+        : Node(NodeKind::TypeExpr, l), form(f), element(elem), sizeExpr(size) {}
 };
 
 // `operand as targetType`, written by the programmer. Sema checks the cast is
@@ -185,11 +197,55 @@ struct ImplicitConversionExpr : Expr {
         : Expr(NodeKind::ImplicitConversionExpr, l), operand(e) {}
 };
 
+// `[a, b, c]` - a fixed-array value. Every element must be assignable to a
+// common element type; the length is the element count.
+struct ArrayLiteralExpr : Expr {
+    std::vector<Expr *> elements;
+    explicit ArrayLiteralExpr(SourceLocation l)
+        : Expr(NodeKind::ArrayLiteralExpr, l) {}
+};
+
+// `base[index]` - one element of an array or slice. `index` is an integer;
+// there is no bounds check (see L0.11).
+struct IndexExpr : Expr {
+    Expr *base;
+    Expr *index;
+    IndexExpr(SourceLocation l, Expr *b, Expr *i)
+        : Expr(NodeKind::IndexExpr, l), base(b), index(i) {}
+};
+
+// `base[lo:hi]` - a sub-slice. Either bound may be omitted (`lo` defaults to 0,
+// `hi` to `base.len`).
+struct SliceExpr : Expr {
+    Expr *base;
+    Expr *lo;  // null -> 0
+    Expr *hi;  // null -> base.len
+    SliceExpr(SourceLocation l, Expr *b, Expr *lo_, Expr *hi_)
+        : Expr(NodeKind::SliceExpr, l), base(b), lo(lo_), hi(hi_) {}
+};
+
+// `base.member` - only `len` for now: an array's or slice's length, as `int`.
+struct MemberExpr : Expr {
+    Expr *base;
+    std::string member;
+    MemberExpr(SourceLocation l, Expr *b, std::string m)
+        : Expr(NodeKind::MemberExpr, l), base(b), member(std::move(m)) {}
+};
+
+// Inserted by sema where a `T[N]` value is used where a `T[]` is wanted: builds
+// the `{ base, len }` pair. The slice type is on `Expr::type`.
+struct ArrayToSliceExpr : Expr {
+    Expr *array;
+    ArrayToSliceExpr(SourceLocation l, Expr *a)
+        : Expr(NodeKind::ArrayToSliceExpr, l), array(a) {}
+};
+
 // Statements
 
 struct VarDeclStmt : Stmt {
     std::string name;
-    Expr *init;  // always present (`var x = expr;`)
+    Expr *init;  // null only for an annotated declaration with no initializer
+                 // (`var buf: char[4096];`), which leaves the storage unset
     TypeExpr *typeAnnotation = nullptr;  // `var x: T = ...`; null means "infer"
     Type declaredType;                   // resolved by sema
     VarDeclStmt(SourceLocation l, std::string n, Expr *e)
@@ -197,10 +253,10 @@ struct VarDeclStmt : Stmt {
 };
 
 struct AssignStmt : Stmt {
-    std::string name;
+    Expr *target;  // an lvalue: a variable reference or an array/slice index
     Expr *value;
-    AssignStmt(SourceLocation l, std::string n, Expr *e)
-        : Stmt(NodeKind::AssignStmt, l), name(std::move(n)), value(e) {}
+    AssignStmt(SourceLocation l, Expr *t, Expr *e)
+        : Stmt(NodeKind::AssignStmt, l), target(t), value(e) {}
 };
 
 struct ExprStmt : Stmt {

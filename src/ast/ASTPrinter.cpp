@@ -9,6 +9,20 @@ namespace jocky::ast {
 
 namespace {
 
+// Renders a TypeExpr the way it was written: "int", "char[4096]", "int[]".
+std::string typeName(const TypeExpr *t) {
+    if (!t) return "?";
+    switch (t->form) {
+    case TypeExpr::Form::Name:
+        return t->name;
+    case TypeExpr::Form::Array:
+        return typeName(t->element) + "[N]";
+    case TypeExpr::Form::Slice:
+        return typeName(t->element) + "[]";
+    }
+    return "?";
+}
+
 class Printer {
 public:
     explicit Printer(llvm::raw_ostream &os) : os_(os) {}
@@ -35,10 +49,10 @@ private:
             if (i) head += " ";
             head += fn.params[i].name;
             if (fn.params[i].typeAnnotation)
-                head += ":" + fn.params[i].typeAnnotation->name;
+                head += ":" + typeName(fn.params[i].typeAnnotation);
         }
         head += ")";
-        if (fn.returnType) head += " -> " + fn.returnType->name;
+        if (fn.returnType) head += " -> " + typeName(fn.returnType);
         line(head);
         indent_ += 1;
         if (fn.body) block(*fn.body);
@@ -59,18 +73,22 @@ private:
         case NodeKind::VarDeclStmt: {
             const auto &v = static_cast<const VarDeclStmt &>(s);
             std::string head = "(vardecl " + v.name;
-            if (v.typeAnnotation) head += ":" + v.typeAnnotation->name;
+            if (v.typeAnnotation) head += ":" + typeName(v.typeAnnotation);
             line(head);
             indent_ += 1;
-            expr(*v.init);
+            if (v.init)
+                expr(*v.init);
+            else
+                line("(uninit)");
             indent_ -= 1;
             line(")");
             break;
         }
         case NodeKind::AssignStmt: {
             const auto &a = static_cast<const AssignStmt &>(s);
-            line("(assign " + a.name);
+            line("(assign");
             indent_ += 1;
+            expr(*a.target);
             expr(*a.value);
             indent_ -= 1;
             line(")");
@@ -163,7 +181,7 @@ private:
         }
         case NodeKind::CastExpr: {
             const auto &n = static_cast<const CastExpr &>(e);
-            line("(cast " + n.targetType->name);
+            line("(cast " + typeName(n.targetType));
             indent_ += 1;
             expr(*n.operand);
             indent_ -= 1;
@@ -208,6 +226,66 @@ private:
             line("(call " + n.callee);
             indent_ += 1;
             for (const Expr *a : n.args) expr(*a);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::ArrayLiteralExpr: {
+            const auto &n = static_cast<const ArrayLiteralExpr &>(e);
+            line("(arraylit");
+            indent_ += 1;
+            for (const Expr *el : n.elements) expr(*el);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::IndexExpr: {
+            const auto &n = static_cast<const IndexExpr &>(e);
+            line("(index");
+            indent_ += 1;
+            expr(*n.base);
+            expr(*n.index);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::SliceExpr: {
+            const auto &n = static_cast<const SliceExpr &>(e);
+            line("(slice");
+            indent_ += 1;
+            expr(*n.base);
+            line(n.lo ? "(lo" : "(lo -)");
+            if (n.lo) {
+                indent_ += 1;
+                expr(*n.lo);
+                indent_ -= 1;
+                line(")");
+            }
+            line(n.hi ? "(hi" : "(hi -)");
+            if (n.hi) {
+                indent_ += 1;
+                expr(*n.hi);
+                indent_ -= 1;
+                line(")");
+            }
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::MemberExpr: {
+            const auto &n = static_cast<const MemberExpr &>(e);
+            line("(member " + n.member);
+            indent_ += 1;
+            expr(*n.base);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::ArrayToSliceExpr: {
+            const auto &n = static_cast<const ArrayToSliceExpr &>(e);
+            line("(decay " + n.type.name());
+            indent_ += 1;
+            expr(*n.array);
             indent_ -= 1;
             line(")");
             break;

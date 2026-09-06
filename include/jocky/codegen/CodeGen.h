@@ -59,6 +59,7 @@ private:
     llvm::PointerType *ptrTy();  // opaque pointer
     llvm::ConstantInt *i64(std::int64_t v);
     llvm::Type *llvmType(ast::Type t);
+    llvm::StructType *sliceTy();  // the { ptr, i64 } layout every slice shares
     llvm::Value *zeroValue(ast::Type t);
 
     // --- declarations ---
@@ -85,6 +86,22 @@ private:
     llvm::Value *emitConvert(llvm::Value *v, ast::Type from, ast::Type to);
     llvm::Value *lowerCondition(const ast::Expr &e);  // -> i1 (or null on error)
 
+    // Arrays and slices (L0.6).
+    llvm::Value *lowerAddr(const ast::Expr &e);  // address of an lvalue
+    llvm::Value *lowerIndex(const ast::IndexExpr &e);
+    llvm::Value *lowerSliceExpr(const ast::SliceExpr &e);
+    llvm::Value *lowerMember(const ast::MemberExpr &e);
+    llvm::Value *lowerArrayLiteral(const ast::ArrayLiteralExpr &e);
+    llvm::Value *lowerArrayToSlice(const ast::ArrayToSliceExpr &e);
+    llvm::Value *makeSlice(llvm::Value *basePtr, llvm::Value *len);
+    // The base pointer and element count of an array or slice expression.
+    struct SeqRef {
+        llvm::Value *basePtr = nullptr;  // ptr to the first element
+        llvm::Value *len = nullptr;      // i64 element count
+        ast::Type elem;
+    };
+    SeqRef sequenceOf(const ast::Expr &e);
+
     llvm::AllocaInst *createEntryAlloca(llvm::Function *fn, llvm::StringRef name,
                                         llvm::Type *type);
     Local *lookupLocal(llvm::StringRef name);
@@ -105,6 +122,7 @@ private:
 
     llvm::Function *mainFn_ = nullptr;  // the implicit main
     llvm::Function *printfFn_ = nullptr;
+    llvm::StructType *sliceTy_ = nullptr;
     llvm::StringMap<llvm::Constant *> formats_;  // printf format strings, by name
 };
 
