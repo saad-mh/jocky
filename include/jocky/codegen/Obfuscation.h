@@ -40,6 +40,53 @@ private:
     std::uint64_t seed_;
 };
 
+// Splits each sufficiently large basic block once, at a random interior point,
+// into two blocks joined by an unconditional branch (the new block is named
+// `jk.split`). This roughly doubles the block count of straight-line code and
+// is the primitive that control-flow flattening builds on. On its own the -O0
+// backend lays the halves out consecutively, so the machine code is unchanged;
+// its value is structural (more blocks, more labels in the IR / CFG).
+class BlockSplittingPass : public llvm::PassInfoMixin<BlockSplittingPass> {
+public:
+    explicit BlockSplittingPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
+// Flattens each function's control-flow graph: every original basic block
+// becomes a case of one `switch` (`jk.dispatch`) driven by a state variable
+// (`jk.sv`), and each block, instead of branching to its successor, stores that
+// successor's number and jumps back to the dispatcher (`jk.loopend`). The
+// linear order of the original blocks is destroyed - a decompiler sees one big
+// loop. `ret` blocks keep their terminator (they exit the loop). Single-block
+// functions are left alone. Requires LLVM's reg2mem to have run first (the
+// registry adds it) so no value is used outside its block and flattening cannot
+// break SSA dominance.
+class FlatteningPass : public llvm::PassInfoMixin<FlatteningPass> {
+public:
+    explicit FlatteningPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
+// Rewrites direct calls to user-defined functions into indirect calls: the
+// callee address is kept in a private global (`jk.fp.<name>`) and loaded at the
+// call site, so the IR no longer carries a direct call edge and the backend
+// emits an indirect call. Calls to declarations and intrinsics (e.g. printf)
+// are left alone. This one does survive to the binary.
+class CallIndirectionPass : public llvm::PassInfoMixin<CallIndirectionPass> {
+public:
+    explicit CallIndirectionPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
 // --- the registry ---------------------------------------------------
 
 // Appends the obfuscation passes selected by `obf` to `mpm`, in a fixed order.

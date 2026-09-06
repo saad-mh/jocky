@@ -61,17 +61,19 @@ The body, in order:
 passes in `src/codegen/Obfuscation.cpp`. `--obf-seed <n>` pins the RNG so a build
 is reproducible; with no seed one is derived at run time, and `-v` echoes it.
 
-Registered so far:
+Registered, in the order they run when all are on:
 
-| name   | what it does                                                        |
-|--------|--------------------------------------------------------------------|
-| `junk` | inserts 1-3 unused `%jk.*` i64 instructions into every basic block |
+| name       | what it does                                                                  | reaches the binary? |
+|------------|------------------------------------------------------------------------------|---------------------|
+| `split`    | cuts each large block in two at a random point (`jk.split`)                  | no (backend re-fuses straight-line blocks) |
+| `flatten`  | replaces each function's CFG with one `switch` dispatch loop over a state var (`jk.sv` / `jk.dispatch` / `jk.loopend`); LLVM's `reg2mem` runs first so no value escapes its block | yes |
+| `indirect` | direct calls to user functions become a load of `jk.fp.<name>` (`ptrtoint(@f) + key`), a subtract, and an indirect call; `printf` etc. stay direct | yes |
+| `junk`     | inserts 1-3 unused `%jk.*` i64 instructions into every basic block           | no (dead SSA; `-O0` backend drops it) |
 
-`junk` is the simplest pass and mostly exists to prove the seam end to end: its
-output is dead SSA, so `--emit-llvm` shows it but the `-O0` backend drops it
-before the object file (an obfuscated binary is currently byte-identical to a
-plain one). Passes that change code the backend must keep - block splitting,
-control-flow flattening, call indirection - come next.
+`split` and `junk` change only the IR (useful when the IR itself is the
+artifact, e.g. `--emit-llvm`); `flatten` and `indirect` change the emitted
+machine code. Obfuscation runs *after* the `-O1` pipeline, so `-O1 --obfuscate`
+optimises first and then obfuscates.
 
 ## Adding a pass
 
