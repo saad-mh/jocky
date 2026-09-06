@@ -90,6 +90,14 @@ void printToken(llvm::raw_ostream &os, const Token &t) {
     switch (t.kind) {
     case TokenKind::IntLiteral:
         os << " int=" << t.intValue;
+        if (t.intSuffixBits != 0)
+            os << " suffix=" << (t.intSuffixSigned ? 'i' : 'u') << t.intSuffixBits;
+        break;
+    case TokenKind::FloatLiteral:
+        os << " float=" << t.floatValue << (t.floatIsF32 ? " f32" : "");
+        break;
+    case TokenKind::CharLiteral:
+        os << " char=" << t.intValue;
         break;
     case TokenKind::StringLiteral:
         os << " str=" << encodeStringLiteral(t.stringValue);

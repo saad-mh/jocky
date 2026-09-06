@@ -27,6 +27,7 @@ bool decodeStringEscapes(llvm::StringRef body, std::string &out,
         case 'r': out.push_back('\r'); break;
         case '\\': out.push_back('\\'); break;
         case '"': out.push_back('"'); break;
+        case '\'': out.push_back('\''); break;
         case '0': out.push_back('\0'); break;
         default:
             if (errorOffset) *errorOffset = i - 1;  // point at the backslash

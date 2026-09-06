@@ -120,18 +120,46 @@ ast::FunctionDecl *Parser::parseFunctionDecl() {
                 diags_.error(current().location, "expected a parameter name");
                 return nullptr;
             }
-            fn->params.push_back(
-                ast::Param{current().spelling.str(), current().location});
+            ast::Param p;
+            p.name = current().spelling.str();
+            p.loc = current().location;
             advance();
+            if (!expect(TokenKind::Colon,
+                        "':' and a type after the parameter name"))
+                return nullptr;
+            p.typeAnnotation = parseType();
+            if (!p.typeAnnotation) return nullptr;
+            fn->params.push_back(std::move(p));
             if (!match(TokenKind::Comma)) break;
         }
     }
     if (!expect(TokenKind::RParen, "')' after the parameter list")) return nullptr;
 
+    // Optional `-> Type`; its absence means `-> int`.
+    if (match(TokenKind::Arrow)) {
+        fn->returnType = parseType();
+        if (!fn->returnType) return nullptr;
+    }
+
     ast::Block *body = parseBlock();
     if (!body) return nullptr;
     fn->body = body;
     return fn;
+}
+
+// A type in annotation position. Only a bare name for now (`int`, `u32`, `bool`,
+// ...); array / pointer forms come in later milestones. Sema resolves the name.
+ast::TypeExpr *Parser::parseType() {
+    if (!check(TokenKind::Identifier)) {
+        diags_.error(current().location,
+                     llvm::Twine("expected a type name but found ") +
+                         describeToken(current()));
+        return nullptr;
+    }
+    const SourceLocation loc = current().location;
+    std::string name = current().spelling.str();
+    advance();
+    return make<ast::TypeExpr>(loc, std::move(name));
 }
 
 ast::Block *Parser::parseBlock() {
@@ -172,6 +200,12 @@ ast::Stmt *Parser::parseVarDecl() {
     std::string name = current().spelling.str();
     advance();
 
+    ast::TypeExpr *annotation = nullptr;
+    if (match(TokenKind::Colon)) {
+        annotation = parseType();
+        if (!annotation) return nullptr;
+    }
+
     if (!expect(TokenKind::Assign, "'=' in a variable declaration")) return nullptr;
 
     ast::Expr *init = parseExpr();
@@ -179,7 +213,9 @@ ast::Stmt *Parser::parseVarDecl() {
     if (!expect(TokenKind::Semicolon, "';' after the variable declaration"))
         return nullptr;
 
-    return make<ast::VarDeclStmt>(loc, std::move(name), init);
+    auto *decl = make<ast::VarDeclStmt>(loc, std::move(name), init);
+    decl->typeAnnotation = annotation;
+    return decl;
 }
 
 ast::Stmt *Parser::parseAssignOrExprStatement() {
@@ -334,7 +370,7 @@ ast::Expr *Parser::parseAdditive() {
 }
 
 ast::Expr *Parser::parseMultiplicative() {
-    ast::Expr *left = parseUnary();
+    ast::Expr *left = parseCast();
     if (!left) return nullptr;
     for (;;) {
         ast::BinaryOp op;
@@ -349,10 +385,26 @@ ast::Expr *Parser::parseMultiplicative() {
         }
         const SourceLocation loc = current().location;
         advance();
-        ast::Expr *right = parseUnary();
+        ast::Expr *right = parseCast();
         if (!right) return nullptr;
         left = make<ast::BinaryExpr>(loc, op, left, right);
     }
+}
+
+// `unary ('as' type)*` - a cast binds tighter than the arithmetic operators and
+// looser than a prefix `-`, so `-x as int` is `(-x) as int` and `a * b as int`
+// is `a * (b as int)`.
+ast::Expr *Parser::parseCast() {
+    ast::Expr *e = parseUnary();
+    if (!e) return nullptr;
+    while (check(TokenKind::KwAs)) {
+        const SourceLocation loc = current().location;
+        advance();  // 'as'
+        ast::TypeExpr *target = parseType();
+        if (!target) return nullptr;
+        e = make<ast::CastExpr>(loc, e, target);
+    }
+    return e;
 }
 
 ast::Expr *Parser::parseUnary() {
@@ -370,9 +422,31 @@ ast::Expr *Parser::parsePrimary() {
     const Token &tok = current();
 
     switch (tok.kind) {
-    case TokenKind::IntLiteral:
+    case TokenKind::IntLiteral: {
         advance();
-        return make<ast::IntLiteralExpr>(tok.location, tok.intValue);
+        auto *lit = make<ast::IntLiteralExpr>(tok.location, tok.intValue);
+        lit->suffixBits = tok.intSuffixBits;
+        lit->suffixSigned = tok.intSuffixSigned;
+        return lit;
+    }
+
+    case TokenKind::FloatLiteral:
+        advance();
+        return make<ast::FloatLiteralExpr>(tok.location, tok.floatValue,
+                                           tok.floatIsF32);
+
+    case TokenKind::CharLiteral:
+        advance();
+        return make<ast::CharLiteralExpr>(
+            tok.location, static_cast<std::uint8_t>(tok.intValue));
+
+    case TokenKind::KwTrue:
+        advance();
+        return make<ast::BoolLiteralExpr>(tok.location, true);
+
+    case TokenKind::KwFalse:
+        advance();
+        return make<ast::BoolLiteralExpr>(tok.location, false);
 
     case TokenKind::StringLiteral:
         advance();

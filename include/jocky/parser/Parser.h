@@ -34,6 +34,7 @@ public:
 private:
     // --- grammar rules ---
     ast::FunctionDecl *parseFunctionDecl();
+    ast::TypeExpr *parseType();
     ast::Block *parseBlock();
     ast::Stmt *parseStatement();
     ast::Stmt *parseVarDecl();
@@ -47,6 +48,7 @@ private:
     ast::Expr *parseRelational();
     ast::Expr *parseAdditive();
     ast::Expr *parseMultiplicative();
+    ast::Expr *parseCast();
     ast::Expr *parseUnary();
     ast::Expr *parsePrimary();
 

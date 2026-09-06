@@ -32,8 +32,15 @@ private:
 
     Token lexNumber();
     Token lexString();
+    Token lexChar();
     Token lexIdentifierOrKeyword();
     void skipWhitespaceAndComments();
+
+    // lexNumber helpers.
+    Token finishNumberToken(TokenKind kind, std::size_t start,
+                            SourceLocation loc);
+    static llvm::StringRef digitsBeforeSuffix(llvm::StringRef spelling);
+    Token validateSuffixedInt(Token &t, SourceLocation loc);
 
     // Character cursor helpers.
     bool atEnd() const { return offset_ >= source_.size(); }

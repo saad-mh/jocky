@@ -22,11 +22,16 @@ namespace jocky::ast {
 enum class NodeKind {
     // Expressions.
     IntLiteralExpr,
+    FloatLiteralExpr,
+    CharLiteralExpr,
+    BoolLiteralExpr,
     StringLiteralExpr,
     VarRefExpr,
     UnaryExpr,
     BinaryExpr,
     CallExpr,
+    CastExpr,             // `expr as T` (written by the user)
+    ImplicitConversionExpr,  // inserted by sema at an allowed widening
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -35,6 +40,8 @@ enum class NodeKind {
     WhileStmt,
     ReturnStmt,
     Block,
+    // Type syntax.
+    TypeExpr,
     // Top level.
     FunctionDecl,
     Module,
@@ -84,8 +91,31 @@ struct Stmt : Node {
 
 struct IntLiteralExpr : Expr {
     std::int64_t value;
+    // An explicit type suffix (`42u32`, `-1i8`). `suffixBits == 0` means the
+    // literal was bare and defaults to `int`.
+    unsigned suffixBits = 0;      // 8 / 16 / 32 / 64
+    bool suffixSigned = true;
     IntLiteralExpr(SourceLocation l, std::int64_t v)
         : Expr(NodeKind::IntLiteralExpr, l), value(v) {}
+};
+
+struct FloatLiteralExpr : Expr {
+    double value;
+    bool isF32;  // had an `f` suffix -> `float`; otherwise `double`
+    FloatLiteralExpr(SourceLocation l, double v, bool f32)
+        : Expr(NodeKind::FloatLiteralExpr, l), value(v), isF32(f32) {}
+};
+
+struct CharLiteralExpr : Expr {
+    std::uint8_t value;
+    CharLiteralExpr(SourceLocation l, std::uint8_t v)
+        : Expr(NodeKind::CharLiteralExpr, l), value(v) {}
+};
+
+struct BoolLiteralExpr : Expr {
+    bool value;
+    BoolLiteralExpr(SourceLocation l, bool v)
+        : Expr(NodeKind::BoolLiteralExpr, l), value(v) {}
 };
 
 struct StringLiteralExpr : Expr {
@@ -122,11 +152,40 @@ struct CallExpr : Expr {
         : Expr(NodeKind::CallExpr, l), callee(std::move(c)) {}
 };
 
+// The type written on the right of `expr as T`, on a parameter (`p: T`), or on a
+// `var` (`var x: T = ...`). Only a bare name for now; array / pointer / slice
+// forms arrive in later milestones. Sema resolves `name` to an `ast::Type`.
+struct TypeExpr : Node {
+    std::string name;
+    TypeExpr(SourceLocation l, std::string n)
+        : Node(NodeKind::TypeExpr, l), name(std::move(n)) {}
+};
+
+// `operand as targetType`, written by the programmer. Sema checks the cast is
+// one the language permits and records the result type on `Expr::type`.
+struct CastExpr : Expr {
+    Expr *operand;
+    TypeExpr *targetType;
+    CastExpr(SourceLocation l, Expr *e, TypeExpr *t)
+        : Expr(NodeKind::CastExpr, l), operand(e), targetType(t) {}
+};
+
+// A widening conversion sema inserts where the language allows one implicitly
+// (e.g. `char` -> `int`, `int` -> `double`). The destination type is on
+// `Expr::type`; codegen emits the matching sext/zext/sitofp/fpext.
+struct ImplicitConversionExpr : Expr {
+    Expr *operand;
+    ImplicitConversionExpr(SourceLocation l, Expr *e)
+        : Expr(NodeKind::ImplicitConversionExpr, l), operand(e) {}
+};
+
 // --- Statements ---------------------------------------------------
 
 struct VarDeclStmt : Stmt {
     std::string name;
-    Expr *init;  // always present in v0 (`var x = expr;`)
+    Expr *init;  // always present (`var x = expr;`)
+    TypeExpr *typeAnnotation = nullptr;  // `var x: T = ...`; null means "infer"
+    Type declaredType;                   // resolved by sema
     VarDeclStmt(SourceLocation l, std::string n, Expr *e)
         : Stmt(NodeKind::VarDeclStmt, l), name(std::move(n)), init(e) {}
 };
@@ -175,11 +234,15 @@ struct ReturnStmt : Stmt {
 struct Param {
     std::string name;
     SourceLocation loc;
+    TypeExpr *typeAnnotation = nullptr;  // `p: T`
+    Type type;                           // resolved by sema
 };
 
 struct FunctionDecl : Node {
     std::string name;
-    std::vector<Param> params;  // every parameter is a 64-bit int in v0
+    std::vector<Param> params;
+    TypeExpr *returnType = nullptr;  // the `-> T` annotation; null means `-> int`
+    Type resolvedReturn;             // resolved by sema
     Block *body;
     FunctionDecl(SourceLocation l, std::string n)
         : Node(NodeKind::FunctionDecl, l), name(std::move(n)), body(nullptr) {}

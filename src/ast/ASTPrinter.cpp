@@ -34,8 +34,11 @@ private:
         for (std::size_t i = 0; i < fn.params.size(); ++i) {
             if (i) head += " ";
             head += fn.params[i].name;
+            if (fn.params[i].typeAnnotation)
+                head += ":" + fn.params[i].typeAnnotation->name;
         }
         head += ")";
+        if (fn.returnType) head += " -> " + fn.returnType->name;
         line(head);
         indent_ += 1;
         if (fn.body) block(*fn.body);
@@ -55,7 +58,9 @@ private:
         switch (s.kind) {
         case NodeKind::VarDeclStmt: {
             const auto &v = static_cast<const VarDeclStmt &>(s);
-            line("(vardecl " + v.name);
+            std::string head = "(vardecl " + v.name;
+            if (v.typeAnnotation) head += ":" + v.typeAnnotation->name;
+            line(head);
             indent_ += 1;
             expr(*v.init);
             indent_ -= 1;
@@ -127,12 +132,51 @@ private:
         switch (e.kind) {
         case NodeKind::IntLiteralExpr: {
             const auto &n = static_cast<const IntLiteralExpr &>(e);
-            line("(intlit " + std::to_string(n.value) + ")");
+            std::string text = "(intlit " + std::to_string(n.value);
+            if (n.suffixBits != 0)
+                text += std::string(" ") + (n.suffixSigned ? "i" : "u") +
+                        std::to_string(n.suffixBits);
+            line(text + ")");
+            break;
+        }
+        case NodeKind::FloatLiteralExpr: {
+            const auto &n = static_cast<const FloatLiteralExpr &>(e);
+            line("(floatlit " + std::to_string(n.value) + (n.isF32 ? "f" : "") +
+                 ")");
+            break;
+        }
+        case NodeKind::CharLiteralExpr: {
+            const auto &n = static_cast<const CharLiteralExpr &>(e);
+            line("(charlit " + std::to_string(static_cast<unsigned>(n.value)) +
+                 ")");
+            break;
+        }
+        case NodeKind::BoolLiteralExpr: {
+            const auto &n = static_cast<const BoolLiteralExpr &>(e);
+            line(std::string("(boollit ") + (n.value ? "true" : "false") + ")");
             break;
         }
         case NodeKind::StringLiteralExpr: {
             const auto &n = static_cast<const StringLiteralExpr &>(e);
             line("(strlit " + encodeStringLiteral(n.value) + ")");
+            break;
+        }
+        case NodeKind::CastExpr: {
+            const auto &n = static_cast<const CastExpr &>(e);
+            line("(cast " + n.targetType->name);
+            indent_ += 1;
+            expr(*n.operand);
+            indent_ -= 1;
+            line(")");
+            break;
+        }
+        case NodeKind::ImplicitConversionExpr: {
+            const auto &n = static_cast<const ImplicitConversionExpr &>(e);
+            line("(convert " + n.type.name());
+            indent_ += 1;
+            expr(*n.operand);
+            indent_ -= 1;
+            line(")");
             break;
         }
         case NodeKind::VarRefExpr: {
