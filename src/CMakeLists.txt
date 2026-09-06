@@ -14,8 +14,10 @@ add_library(jocky_core STATIC
     Support/StringEscape.cpp
     lexer/Lexer.cpp
     ast/AST.cpp
+    ast/Type.cpp
     ast/ASTPrinter.cpp
     parser/Parser.cpp
+    sema/Sema.cpp
     codegen/CodeGen.cpp
     codegen/PassPipeline.cpp
     codegen/Obfuscation.cpp

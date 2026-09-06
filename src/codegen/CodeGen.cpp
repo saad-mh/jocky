@@ -84,18 +84,8 @@ std::unique_ptr<llvm::Module> CodeGen::lowerModule(const ast::Module &program) {
 }
 
 void CodeGen::declareFunction(const ast::FunctionDecl &fn) {
-    if (fn.name == "main") {
-        error(fn.loc,
-              "'main' is defined automatically from the top-level statements; "
-              "rename this function");
-        return;
-    }
-    if (functions_.count(fn.name)) {
-        error(fn.loc,
-              llvm::Twine("function '") + fn.name + "' is defined more than once");
-        return;
-    }
-
+    // Name clashes (a user `main`, a redefinition) are already rejected by sema;
+    // codegen only ever sees a well-formed module.
     llvm::SmallVector<llvm::Type *, 8> paramTypes(fn.params.size(), i64Ty());
     auto *fnTy = llvm::FunctionType::get(i64Ty(), paramTypes, /*isVarArg=*/false);
     auto *f = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
@@ -214,8 +204,7 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
         if (!value) return;
         llvm::AllocaInst *slot = lookupLocal(a.name);
         if (!slot) {
-            error(a.loc, llvm::Twine("assignment to undeclared variable '") +
-                             a.name + "'");
+            error(a.loc, "internal: assignment to a variable sema did not resolve");
             return;
         }
         builder_.CreateStore(value, slot);
@@ -316,16 +305,16 @@ llvm::Value *CodeGen::lowerExpr(const ast::Expr &expr) {
         return i64(static_cast<const ast::IntLiteralExpr &>(expr).value);
 
     case ast::NodeKind::StringLiteralExpr:
-        error(expr.loc,
-              "a string literal can only be passed directly to print(...)");
+        // sema only lets a string literal through as a direct print(...) argument,
+        // which lowerCall handles without calling lowerExpr.
+        error(expr.loc, "internal: bare string literal reached codegen");
         return nullptr;
 
     case ast::NodeKind::VarRefExpr: {
         const auto &v = static_cast<const ast::VarRefExpr &>(expr);
         llvm::AllocaInst *slot = lookupLocal(v.name);
         if (!slot) {
-            error(v.loc,
-                  llvm::Twine("use of undeclared variable '") + v.name + "'");
+            error(v.loc, "internal: reference to a variable sema did not resolve");
             return nullptr;
         }
         return builder_.CreateLoad(i64Ty(), slot, v.name);
@@ -373,8 +362,7 @@ llvm::Value *CodeGen::lowerBinary(const ast::BinaryExpr &e) {
 llvm::Value *CodeGen::lowerCall(const ast::CallExpr &e) {
     if (e.callee == "print") {
         if (e.args.size() != 1) {
-            error(e.loc, llvm::Twine("print expects exactly 1 argument but got ") +
-                             llvm::Twine(e.args.size()));
+            error(e.loc, "internal: print reached codegen with a bad argument count");
             return nullptr;
         }
         const ast::Expr &arg = *e.args[0];
@@ -396,14 +384,7 @@ llvm::Value *CodeGen::lowerCall(const ast::CallExpr &e) {
 
     llvm::Function *callee = functions_.lookup(e.callee);
     if (!callee) {
-        error(e.loc,
-              llvm::Twine("call to undefined function '") + e.callee + "'");
-        return nullptr;
-    }
-    if (callee->arg_size() != e.args.size()) {
-        error(e.loc, llvm::Twine("function '") + e.callee + "' expects " +
-                         llvm::Twine(callee->arg_size()) + " argument(s) but " +
-                         llvm::Twine(e.args.size()) + " were given");
+        error(e.loc, "internal: call to a function sema did not resolve");
         return nullptr;
     }
 

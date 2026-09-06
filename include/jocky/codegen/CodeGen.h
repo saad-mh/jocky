@@ -6,9 +6,10 @@
 // that later if asked; `-O0` just leaves the loads and stores in place, which
 // is still correct.
 //
-// This class also does the small amount of semantic checking v0 needs
-// (undeclared names, wrong argument counts, strings used anywhere other than a
-// direct print argument). Those are reported through the DiagnosticEngine.
+// By the time codegen runs, the semantic-analysis stage (src/sema/) has
+// already resolved every name and checked every call. Codegen trusts that: the
+// `error(...)` calls left here are marked "internal:" and only fire on a
+// compiler bug, not on bad user input.
 
 #ifndef JOCKY_CODEGEN_CODEGEN_H
 #define JOCKY_CODEGEN_CODEGEN_H

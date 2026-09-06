@@ -1,0 +1,23 @@
+// RUN: %jocky check "%s"
+//
+// `jocky check` runs the front end and semantic analysis only, with no
+// codegen. A well-formed program produces no diagnostics and exits 0.
+
+func add(a, b) {
+    var total = a + b;
+    return total;
+}
+
+func classify(n) {
+    if (n < 0) {
+        return 0 - 1;
+    } else {
+        return 1;
+    }
+}
+
+var x = add(2, 40);
+while (x > 0) {
+    x = x - 1;
+}
+print(classify(add(x, 3)));

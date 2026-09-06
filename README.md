@@ -3,7 +3,7 @@
 JOCKY is a small compiled programming language. Its compiler is written in C++
 and uses LLVM to turn `.jk` source files into native executables.
 
-    hello.jk  ->  lexer  ->  parser  ->  AST  ->  LLVM IR  ->  object file  ->  native executable
+    hello.jk  ->  lexer  ->  parser  ->  AST  ->  sema  ->  LLVM IR  ->  object file  ->  native executable
 
 ## Example
 
@@ -43,6 +43,7 @@ once (it provisions a vendored LLVM 18 SDK under `.vendor/`), then
 .\build\bin\jocky.exe build <file>.jk -o <file>.exe   # compile and link
 .\build\bin\jocky.exe build --emit-llvm <file>.jk     # print the LLVM IR
 .\build\bin\jocky.exe build --obfuscate <file>.jk -o <file>.exe   # + obfuscation passes
+.\build\bin\jocky.exe check <file>.jk                 # front end + semantic analysis only
 .\build\bin\jocky.exe lex   --dump-tokens <file>.jk   # print the token stream
 .\build\bin\jocky.exe parse --dump-ast    <file>.jk   # print the syntax tree
 ```
@@ -69,3 +70,7 @@ The full grammar is in [docs/grammar.md](docs/grammar.md). The compiler's
 internal structure is in [docs/architecture.md](docs/architecture.md), and the
 extension point for future code-generation passes is described in
 [docs/codegen-and-passes.md](docs/codegen-and-passes.md).
+
+Planned language extensions - a static type system, low-level and FFI
+primitives - and the memory-forensics tool they exist to support are specified
+in [docs/requirements.md](docs/requirements.md).

@@ -12,9 +12,10 @@ driver stops and the later stages do not run.
 
 The entry point. `main.cpp` turns the command line into an `Options` value.
 `Driver::run` then calls each stage in turn and decides what to do based on the
-sub-command (`build`, `lex`, `parse`) and flags (`--emit-llvm`, `--emit-obj`,
-and so on). It also owns the small jobs around the edges: reading the input
-file, choosing the output file name, deleting the temporary object file.
+sub-command (`build`, `check`, `lex`, `parse`) and flags (`--emit-llvm`,
+`--emit-obj`, and so on). It also owns the small jobs around the edges: reading
+the input file, choosing the output file name, deleting the temporary object
+file.
 
 ## 2. Lexer (`src/lexer/`)
 
@@ -46,14 +47,32 @@ The AST node types live in `src/ast/`. An `ast::Module` owns every node; the
 nodes point at each other with plain pointers and are all freed together when
 the module is destroyed.
 
-## 4. Codegen - lowering (`src/codegen/CodeGen.cpp`)
+## 4. Semantic analysis (`src/sema/`)
 
-Input: the AST. Output: an `llvm::Module` - LLVM's in-memory representation of a
-program, made of functions, basic blocks, and instructions ("LLVM IR").
+Input: the AST. Output: the same AST, checked (and, as the type system grows,
+annotated with a resolved `ast::Type` on every expression).
 
-This stage also does the small amount of checking v0 needs: every name must be
-declared, calls must pass the right number of arguments, and a string literal may
-only be used as a direct argument to `print`.
+This is where the front end's meaning-level rules live: every name must resolve,
+every call must match a signature, and - from the L0 type-system milestone on -
+every expression must have a type its context accepts. It is a two-pass walk:
+first register every function's name and arity so calls resolve regardless of
+source order, then walk each body in source order. The scope model is v0's: no
+nested scopes, a `var` visible for the rest of its function once its initializer
+has been checked.
+
+`jocky check <file>.jk` runs the pipeline up to and including this stage and
+then stops - handy for editor integration and fast feedback. `build` runs it
+too, and only reaches codegen if it reported nothing.
+
+## 5. Codegen - lowering (`src/codegen/CodeGen.cpp`)
+
+Input: the checked AST. Output: an `llvm::Module` - LLVM's in-memory
+representation of a program, made of functions, basic blocks, and instructions
+("LLVM IR").
+
+Codegen trusts sema: it does no name lookup or argument-count checking of its
+own. The few `error(...)` calls it still contains are marked "internal:" and
+only fire on a compiler bug.
 
 The lowering is deliberately simple. Every JOCKY value is a 64-bit integer.
 Every local variable is a stack slot: declaring it emits an `alloca`, reading it
@@ -65,7 +84,7 @@ builtin: the compiler declares C's `printf`, creates a format string
 
 You can see the result with `jocky build --emit-llvm hello.jk`.
 
-## 5. Codegen - transform pipeline (`src/codegen/PassPipeline.cpp`)
+## 6. Codegen - transform pipeline (`src/codegen/PassPipeline.cpp`)
 
 `runTransformPipeline` is the single place where IR transform passes run. It does
 nothing at `-O0`, runs LLVM's standard `-O1` pipeline at `-O1`, and - when
@@ -73,7 +92,7 @@ nothing at `-O0`, runs LLVM's standard `-O1` pipeline at `-O1`, and - when
 is kept to one function on purpose, so new per-build passes can be added with no
 change to any caller. See `codegen-and-passes.md`.
 
-## 6. Codegen - object file (`src/codegen/ObjectEmitter.cpp`)
+## 7. Codegen - object file (`src/codegen/ObjectEmitter.cpp`)
 
 Input: the `llvm::Module`. Output: a native object file (`.obj` on Windows).
 
@@ -82,7 +101,7 @@ its details on the module, and then runs LLVM's code generator to turn the IR
 into machine code and write it out. This is the one part of JOCKY that uses
 LLVM's older "legacy pass manager", because the code generator still requires it.
 
-## 7. Driver - linking (`src/driver/Linker.cpp`)
+## 8. Driver - linking (`src/driver/Linker.cpp`)
 
 Input: the object file. Output: a runnable executable.
 

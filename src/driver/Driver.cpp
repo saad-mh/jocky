@@ -18,6 +18,7 @@
 #include "jocky/lexer/Lexer.h"
 #include "jocky/lexer/Token.h"
 #include "jocky/parser/Parser.h"
+#include "jocky/sema/Sema.h"
 
 #include <llvm/ADT/SmallString.h>
 #include <llvm/IR/LLVMContext.h>
@@ -152,11 +153,31 @@ int runParse(const Options &options) {
     return 0;
 }
 
+// `jocky check`: front end + semantic analysis, no codegen. Silent on success;
+// prints diagnostics and exits non-zero on any error.
+int runCheck(const Options &options) {
+    DiagnosticEngine diags(options.inputPath);
+    std::unique_ptr<llvm::MemoryBuffer> buffer;
+    std::unique_ptr<ast::Module> module = frontend(options, diags, buffer);
+    if (!module) return 1;
+
+    if (!sema::analyze(*module, diags)) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
+    return 0;
+}
+
 int runBuild(const Options &options) {
     DiagnosticEngine diags(options.inputPath);
     std::unique_ptr<llvm::MemoryBuffer> buffer;
     std::unique_ptr<ast::Module> ast = frontend(options, diags, buffer);
     if (!ast) return 1;
+
+    if (!sema::analyze(*ast, diags)) {
+        diags.printAll(llvm::errs());
+        return 1;
+    }
 
     llvm::LLVMContext context;
     const llvm::StringRef moduleName =
@@ -253,6 +274,8 @@ int Driver::run(const Options &options) {
         return runLex(options);
     case Command::Parse:
         return runParse(options);
+    case Command::Check:
+        return runCheck(options);
     case Command::Build:
         return runBuild(options);
     case Command::None:

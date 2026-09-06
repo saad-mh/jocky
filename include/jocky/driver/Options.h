@@ -16,6 +16,7 @@ namespace jocky::driver {
 enum class Command {
     None,   // no sub-command (e.g. just `--help` or `--version`)
     Build,  // compile a .jk file all the way to a native executable
+    Check,  // run the front end + semantic analysis only; report diagnostics
     Lex,    // debug: print the token stream
     Parse,  // debug: print the parsed syntax tree
 };

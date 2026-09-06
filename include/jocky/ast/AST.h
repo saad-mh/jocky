@@ -9,6 +9,7 @@
 #define JOCKY_AST_AST_H
 
 #include "jocky/Support/SourceLocation.h"
+#include "jocky/ast/Type.h"
 
 #include <cstdint>
 #include <memory>
@@ -67,6 +68,12 @@ struct Node {
 
 struct Expr : Node {
     using Node::Node;
+
+    // Filled in by the semantic-analysis stage (src/sema/). Every expression
+    // that survives sema carries its resolved type here; codegen reads it and
+    // never re-derives one. Stays TypeKind::Error until sema runs (or when the
+    // expression itself failed to check).
+    Type type;
 };
 
 struct Stmt : Node {
