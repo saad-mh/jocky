@@ -16,10 +16,12 @@
 
 #include "jocky/ast/AST.h"
 
+#include <cstddef>
 #include <memory>
 
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
+#include <llvm/ADT/StringSet.h>
 #include <llvm/IR/IRBuilder.h>
 
 namespace llvm {
@@ -27,6 +29,7 @@ class AllocaInst;
 class BasicBlock;
 class Constant;
 class Function;
+class FunctionType;
 class LLVMContext;
 class Module;
 class Value;
@@ -65,6 +68,10 @@ private:
 
     // --- declarations ---
     void declareFunction(const ast::FunctionDecl &fn);
+    void declareExtern(const ast::ExternDecl &e);
+    llvm::Type *externLlvmType(ast::Type t);  // bool -> i32 at the C ABI
+    llvm::Value *adaptExternArg(llvm::Value *v, ast::Type argTy,
+                                llvm::FunctionType *fnTy, std::size_t idx);
     void declareImplicitMain();
     llvm::Function *getOrDeclarePrintf();
     llvm::Constant *internFormat(llvm::StringRef text, llvm::StringRef name);
@@ -125,6 +132,7 @@ private:
     llvm::Function *printfFn_ = nullptr;
     llvm::StructType *sliceTy_ = nullptr;
     llvm::StringMap<llvm::StructType *> structTypes_;  // one per struct name
+    llvm::StringSet<> externNames_;  // callees declared via `extern "C"`
     llvm::StringMap<llvm::Constant *> formats_;  // printf format strings, by name
 };
 

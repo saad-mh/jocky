@@ -267,6 +267,10 @@ int runBuild(const Options &options) {
 
     LinkOptions linkOptions;
     linkOptions.verbose = options.verbose;
+    linkOptions.libSearchPaths = options.libSearchPaths;
+    linkOptions.libs = options.extraLibs;
+    linkOptions.libs.insert(linkOptions.libs.end(), ast->linkLibs.begin(),
+                            ast->linkLibs.end());
     const std::string objectPathStr(objectPath.str());
     const bool linked = link({objectPathStr}, exePath, linkOptions);
 

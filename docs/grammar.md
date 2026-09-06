@@ -32,7 +32,8 @@ milestone plan.
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
     keywords   func  var  if  else  while  return  as  true  false  null
-               sizeof  offsetof  struct
+               sizeof  offsetof  struct  extern
+               (`link` and `out` are contextual - keywords only in position)
     symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
                == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
@@ -42,11 +43,18 @@ ordinary identifier that codegen treats as a builtin.
 
 ## Grammar
 
-    program      := (structDecl | functionDecl | statement)*
+    program      := (structDecl | externDecl | linkPragma | functionDecl
+                     | statement)*
 
     structDecl   := 'struct' IDENT '{' (IDENT ':' type ','?)* '}'
                                                // fields in declared order, C
                                                // natural alignment, no reorder
+
+    linkPragma   := 'link' STRING ';'          // add `-l<name>` to the link
+
+    externDecl   := 'extern' '"C"' IDENT '(' externParams? ')' ('->' type)? ';'
+    externParams := externParam (',' externParam)* (',' '...')? | '...'
+    externParam  := 'out'? IDENT ':' type      // `out` is a documentation marker
 
     functionDecl := 'func' IDENT '(' paramList? ')' ('->' type)? block
     paramList    := param (',' param)*
@@ -161,6 +169,17 @@ compile-time `int` (`sizeof(u32)` is 4, `sizeof(char[16])` is 16,
   a byte buffer: `var h = buf as ptr<Header>; h.field`. An array or slice `as` a
   pointer yields its base address.
 - `offsetof(S, field)` is the field's byte offset, a compile-time `int`.
+
+### FFI
+
+- `extern "C" name(params) -> ret;` declares a C function resolved at link
+  time. A trailing `...` makes it varargs; a call then takes at least the fixed
+  parameters. A struct crosses to an extern only by `ptr<S>`, never by value.
+- At the C ABI boundary a JOCKY `bool` is a 4-byte int (Win32 `BOOL`).
+- `link "name";` adds `-lname` to the link; the `jocky build` command also takes
+  `-l <name>` / `-lname` and `-L <dir>` / `-Ldir`. `kernel32` and the C runtime
+  are linked by the `clang` driver already; `ntdll`, `dbghelp`, etc. must be
+  named.
 
 A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
 like any other array.

@@ -9,6 +9,7 @@
 #define JOCKY_DRIVER_LINKER_H
 
 #include <string>
+#include <vector>
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
@@ -19,6 +20,9 @@ struct LinkOptions {
     bool verbose = false;
     // Explicit path to the linker driver. Empty means "find clang automatically".
     std::string linkerDriver;
+    // Extra libraries and search paths, from `-l` / `-L` and `link "name";`.
+    std::vector<std::string> libs;
+    std::vector<std::string> libSearchPaths;
 };
 
 // Links `objectFiles` into an executable at `outputPath`. On failure the

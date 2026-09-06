@@ -179,6 +179,12 @@ void CodeGen::declareImplicitMain() {
 
 llvm::Function *CodeGen::getOrDeclarePrintf() {
     if (printfFn_) return printfFn_;
+    // The program may also have `extern "C" printf(...)`; reuse that declaration
+    // rather than letting LLVM rename ours to `printf.1`.
+    if (llvm::Function *existing = module_->getFunction("printf")) {
+        printfFn_ = existing;
+        return printfFn_;
+    }
     auto *fnTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx_), {ptrTy()},
                                          /*isVarArg=*/true);
     printfFn_ = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
@@ -781,16 +787,45 @@ llvm::Value *CodeGen::lowerCall(const ast::CallExpr &e) {
         error(e.loc, "internal: call to a function sema did not resolve");
         return nullptr;
     }
+    const bool isExtern = externNames_.count(e.callee) != 0;
+    llvm::FunctionType *fnTy = callee->getFunctionType();
 
     llvm::SmallVector<llvm::Value *, 8> args;
-    for (const ast::Expr *a : e.args) {
-        llvm::Value *v = lowerExpr(*a);
+    for (std::size_t i = 0; i < e.args.size(); ++i) {
+        llvm::Value *v = lowerExpr(*e.args[i]);
         if (!v) return nullptr;
+        if (isExtern) v = adaptExternArg(v, e.args[i]->type, fnTy, i);
         args.push_back(v);
     }
     llvm::CallInst *call = builder_.CreateCall(callee, args);
     if (!callee->getReturnType()->isVoidTy()) call->setName("call");
+
+    // An extern that returns JOCKY `bool` was declared `-> i32`; bring the
+    // result back to `i1`.
+    if (isExtern && e.type.isBool())
+        return builder_.CreateICmpNE(
+            call, llvm::ConstantInt::get(call->getType(), 0), "tobool");
     return call;
+}
+
+// Reconcile one argument's LLVM type with what the extern's signature wants:
+// `bool` (i1) -> i32 at the ABI boundary, and a varargs `float` promoted to
+// `double` (C default argument promotion).
+llvm::Value *CodeGen::adaptExternArg(llvm::Value *v, ast::Type argTy,
+                                     llvm::FunctionType *fnTy, std::size_t idx) {
+    if (idx < fnTy->getNumParams()) {
+        llvm::Type *want = fnTy->getParamType(idx);
+        if (v->getType() == want) return v;
+        if (v->getType()->isIntegerTy(1) && want->isIntegerTy())
+            return builder_.CreateZExt(v, want, "abi.bool");
+        return v;
+    }
+    // A `...` argument.
+    if (argTy.isFloat() && argTy.bits == 32)
+        return builder_.CreateFPExt(v, llvm::Type::getDoubleTy(ctx_), "abi.vararg");
+    if (v->getType()->isIntegerTy(1))
+        return builder_.CreateZExt(v, llvm::Type::getInt32Ty(ctx_), "abi.bool");
+    return v;
 }
 
 // `print(x)`: the format string is chosen from the argument's type (L0.8).

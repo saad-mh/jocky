@@ -1,0 +1,15 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%s" -o "%t.exe"
+// RUN: "%t.exe" | %FileCheck "%s"
+//
+// L2.4: `link "name";` in source adds `-lname` to the link, resolving a symbol
+// that is not in the default libraries (RtlGetCurrentPeb is in ntdll).
+
+link "ntdll";
+
+extern "C" RtlGetCurrentPeb() -> rawptr;
+
+var peb = RtlGetCurrentPeb();
+if (peb == null) { print(0); } else { print(1); }   // 1
+
+// CHECK: 1
