@@ -40,6 +40,7 @@ enum class NodeKind {
     NullLiteralExpr,     // null
     AddrOfExpr,          // &lvalue
     DerefExpr,           // *ptr
+    SizeofExpr,          // sizeof(T) / sizeof(expr)
     // Statements.
     VarDeclStmt,
     AssignStmt,
@@ -264,6 +265,15 @@ struct DerefExpr : Expr {
     Expr *operand;
     DerefExpr(SourceLocation l, Expr *e)
         : Expr(NodeKind::DerefExpr, l), operand(e) {}
+};
+
+// `sizeof(...)` - a compile-time `int`. Exactly one of `typeArg` / `exprArg` is
+// set (the parser tries a type first, then falls back to an expression).
+struct SizeofExpr : Expr {
+    TypeExpr *typeArg = nullptr;
+    Expr *exprArg = nullptr;
+    Type measured;  // resolved by sema: the type whose size this is
+    explicit SizeofExpr(SourceLocation l) : Expr(NodeKind::SizeofExpr, l) {}
 };
 
 // Statements

@@ -45,6 +45,13 @@ public:
     std::size_t errorCount() const { return errorCount_; }
     const std::vector<Diagnostic> &diagnostics() const { return diagnostics_; }
 
+    // Speculative parsing support: `mark()` records the current count; `rewind()`
+    // drops every diagnostic recorded since a mark. Used when the parser tries
+    // one interpretation, fails, and falls back to another (e.g. `sizeof(T)` vs
+    // `sizeof(expr)`).
+    std::size_t mark() const { return diagnostics_.size(); }
+    void rewind(std::size_t m);
+
     // Prints every recorded diagnostic, in report order, as:
     //     <filename>:<line>:<column>: error: <message>
     void printAll(llvm::raw_ostream &os) const;

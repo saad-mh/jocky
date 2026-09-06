@@ -320,6 +320,19 @@ private:
             line(")");
             break;
         }
+        case NodeKind::SizeofExpr: {
+            const auto &n = static_cast<const SizeofExpr &>(e);
+            if (n.typeArg) {
+                line("(sizeof " + typeName(n.typeArg) + ty(e) + ")");
+            } else {
+                line("(sizeof" + ty(e));
+                indent_ += 1;
+                expr(*n.exprArg);
+                indent_ -= 1;
+                line(")");
+            }
+            break;
+        }
         default:
             line("(?expr?)");
             break;

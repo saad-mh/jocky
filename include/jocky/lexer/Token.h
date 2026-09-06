@@ -34,7 +34,8 @@ enum class TokenKind {
     KwAs,     // the `expr as Type` cast operator
     KwTrue,
     KwFalse,
-    KwNull,   // the null-pointer literal
+    KwNull,     // the null-pointer literal
+    KwSizeof,   // sizeof(T) / sizeof(expr)
 
     // punctuations
     LParen,     // (

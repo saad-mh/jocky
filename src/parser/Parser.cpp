@@ -642,6 +642,30 @@ ast::Expr *Parser::parsePrimary() {
         advance();
         return make<ast::NullLiteralExpr>(tok.location);
 
+    case TokenKind::KwSizeof: {
+        const SourceLocation loc = tok.location;
+        advance();  // 'sizeof'
+        if (!expect(TokenKind::LParen, "'(' after 'sizeof'")) return nullptr;
+
+        auto *node = make<ast::SizeofExpr>(loc);
+        // Try to read a type; if that consumes exactly up to `)`, it was
+        // `sizeof(T)`. Otherwise rewind and read an expression.
+        const std::size_t savedPos = pos_;
+        const std::size_t savedDiag = diags_.mark();
+        ast::TypeExpr *asType = parseType();
+        if (asType && check(TokenKind::RParen)) {
+            node->typeArg = asType;
+        } else {
+            pos_ = savedPos;
+            diags_.rewind(savedDiag);
+            node->exprArg = parseExpr();
+            if (!node->exprArg) return nullptr;
+        }
+        if (!expect(TokenKind::RParen, "')' to close 'sizeof(...)'"))
+            return nullptr;
+        return node;
+    }
+
     case TokenKind::StringLiteral:
         advance();
         return make<ast::StringLiteralExpr>(tok.location, tok.stringValue);

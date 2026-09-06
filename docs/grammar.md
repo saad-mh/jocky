@@ -32,6 +32,7 @@ milestone plan.
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
     keywords   func  var  if  else  while  return  as  true  false  null
+               sizeof
     symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
                == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
 
@@ -96,6 +97,7 @@ ordinary identifier that codegen treats as a builtin.
                     | CHAR
                     | STRING
                     | 'true' | 'false' | 'null'
+                    | 'sizeof' '(' (type | expr) ')'   // compile-time int
                     | '[' (expr (',' expr)*)? ']'   // an array literal
                     | IDENT
                     | IDENT '(' argList? ')'    // a call
@@ -133,6 +135,13 @@ so a nested `ptr<ptr<int>>` closes without a special rule.
   compare with `== !=` and, unsigned, with `< <= > >=`.
 - `rawptr` - an untyped byte pointer (C `void*`). It cannot be dereferenced;
   cast it to a `ptr<T>` first. `rawptr` and `ptr<T>` convert only with `as`.
+
+Pointer arithmetic: `p + n` / `p - n` move a `ptr<T>` by `n * sizeof(T)` (by
+`n` bytes for a `rawptr`); `p - q` (same pointer type) is the element count
+between them. `addr as ptr<T>` and `p as u64` convert between a pointer and an
+integer address. `sizeof(T)` / `sizeof(expr)` is the C-layout byte size, a
+compile-time `int` (`sizeof(u32)` is 4, `sizeof(char[16])` is 16,
+`sizeof(ptr<T>)` is 8).
 
 A string literal is a `char[len + 1]`, NUL-terminated, and decays to `char[]`
 like any other array.

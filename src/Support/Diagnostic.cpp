@@ -15,6 +15,14 @@ void DiagnosticEngine::error(SourceLocation loc, const llvm::Twine &message) {
     ++errorCount_;
 }
 
+void DiagnosticEngine::rewind(std::size_t m) {
+    if (m >= diagnostics_.size()) return;
+    diagnostics_.resize(m);
+    errorCount_ = 0;
+    for (const Diagnostic &d : diagnostics_)
+        if (d.severity == Severity::Error) ++errorCount_;
+}
+
 void DiagnosticEngine::printAll(llvm::raw_ostream &os) const {
     for (const Diagnostic &d : diagnostics_) {
         os << filename_ << ':' << d.location.line << ':' << d.location.column

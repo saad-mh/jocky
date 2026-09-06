@@ -135,16 +135,24 @@ private:
         return t;
     }
 
-    // A minimal compile-time evaluator for an array length: integer literals
-    // and `+ - * / %` over them, plus parenthesised / cast forms. Enough for
-    // `char[4096]`, `int[N*2]`. Returns false if `e` is not foldable or is
-    // negative.
-    static bool constUint(const ast::Expr &e, std::uint64_t &out) {
+    // A minimal compile-time evaluator for an array length: integer literals,
+    // `+ - * / %` over them, `sizeof(T)`, plus parenthesised / cast forms.
+    // Enough for `char[4096]`, `int[N*2]`, `u8[sizeof(int)]`. Returns false if
+    // `e` is not foldable or is negative.
+    bool constUint(const ast::Expr &e, std::uint64_t &out) {
         switch (e.kind) {
         case ast::NodeKind::IntLiteralExpr: {
             const auto &n = static_cast<const ast::IntLiteralExpr &>(e);
             if (n.value < 0) return false;
             out = static_cast<std::uint64_t>(n.value);
+            return true;
+        }
+        case ast::NodeKind::SizeofExpr: {
+            const auto &s = static_cast<const ast::SizeofExpr &>(e);
+            if (!s.typeArg) return false;  // sizeof(expr) is not folded here
+            const Type m = resolveType(s.typeArg);
+            if (m.isError() || m.byteSize() == 0) return false;
+            out = m.byteSize();
             return true;
         }
         case ast::NodeKind::CastExpr:
@@ -185,12 +193,14 @@ private:
         return (t.isArray() || t.isSlice()) && t.elem() == Type::charTy();
     }
 
-    // What `expr as T` accepts: any scalar to any other scalar, and any pointer
-    // to any other pointer (`rawptr` <-> `ptr<T>`, `ptr<T>` <-> `ptr<U>`).
-    // Pointer <-> integer casts are added in L1.4.
+    // What `expr as T` accepts: any scalar to any other scalar, any pointer to
+    // any other pointer (`rawptr` <-> `ptr<T>`, `ptr<T>` <-> `ptr<U>`), and a
+    // pointer to or from an integer (`addr as ptr<T>`, `p as u64`).
     static bool explicitlyConvertible(Type from, Type to) {
         if (from.isError() || to.isError()) return true;
         if (from.isPointer() && to.isPointer()) return true;
+        if (from.isPointer() && to.isInteger()) return true;
+        if (from.isInteger() && to.isPointer()) return true;
         const bool fromScalar = from.isNumeric() || from.isBool();
         const bool toScalar = to.isNumeric() || to.isBool();
         return fromScalar && toScalar;
@@ -532,6 +542,8 @@ private:
             return checkAddrOf(static_cast<ast::AddrOfExpr &>(e));
         case ast::NodeKind::DerefExpr:
             return checkDeref(static_cast<ast::DerefExpr &>(e));
+        case ast::NodeKind::SizeofExpr:
+            return checkSizeof(static_cast<ast::SizeofExpr &>(e));
         default:
             err(e.loc, "internal: unexpected expression kind in sema");
             return Type::error();
@@ -633,6 +645,40 @@ private:
         return Type::pointer(ot);
     }
 
+    static bool isBuiltinTypeName(llvm::StringRef n) {
+        return llvm::StringSwitch<bool>(n)
+            .Cases("void", "bool", "int", "char", true)
+            .Cases("i8", "i16", "i32", "i64", true)
+            .Cases("u8", "u16", "u32", "u64", true)
+            .Cases("float", "double", "rawptr", true)
+            .Default(false);
+    }
+
+    Type checkSizeof(ast::SizeofExpr &e) {
+        if (e.typeArg) {
+            // `sizeof(name)` is ambiguous: `name` may be a type or a variable.
+            // Prefer a variable unless the name is a builtin type. (Array /
+            // slice / pointer forms are unambiguously types.)
+            if (e.typeArg->form == ast::TypeExpr::Form::Name &&
+                !isBuiltinTypeName(e.typeArg->name)) {
+                auto it = locals_.find(e.typeArg->name);
+                if (it != locals_.end()) {
+                    e.measured = it->second;
+                    return e.measured.isError() ? Type::error() : Type::intTy();
+                }
+            }
+            e.measured = resolveType(e.typeArg);
+        } else {
+            e.measured = checkExpr(*e.exprArg);
+        }
+        if (e.measured.isError()) return Type::error();
+        if (e.measured.isVoid()) {
+            err(e.loc, "sizeof needs a sized type, not 'void'");
+            return Type::error();
+        }
+        return Type::intTy();  // a compile-time int
+    }
+
     Type checkDeref(ast::DerefExpr &e) {
         const Type ot = checkExpr(*e.operand);
         if (ot.isError()) return Type::error();
@@ -656,9 +702,10 @@ private:
         return op == ast::BinaryOp::Shl || op == ast::BinaryOp::Shr;
     }
 
-    // Pointer operands: only comparisons for now. `==` / `!=` accept `null` on
-    // either side; ordering needs the same pointer type. (Pointer arithmetic
-    // `p + n` / `p - q` arrives in L1.4.)
+    // Operators with at least one pointer operand:
+    //   ptr == / != ptr | null,  ptr </ <= / > / >= ptr  -> bool
+    //   ptr + int,  int + ptr,  ptr - int                 -> the pointer type
+    //   ptr<T> - ptr<T>  (or rawptr - rawptr)             -> int (element count)
     Type checkPointerBinary(ast::BinaryExpr &b, Type lt, Type rt) {
         if (b.lhs->kind == ast::NodeKind::NullLiteralExpr && rt.isPointer()) {
             b.lhs->type = rt;
@@ -668,14 +715,41 @@ private:
             b.rhs->type = lt;
             rt = lt;
         }
+
+        // ptr +/- int  (int + ptr commutes for `+`). The offset keeps its own
+        // integer type; codegen sign/zero-extends it to a machine word.
+        if (b.op == ast::BinaryOp::Add || b.op == ast::BinaryOp::Sub) {
+            const bool lPtr = lt.isPointer(), rPtr = rt.isPointer();
+            if (lPtr && rt.isInteger()) {
+                adaptIntLiteral(*b.rhs, Type::intTy());
+                return lt;
+            }
+            if (b.op == ast::BinaryOp::Add && rPtr && lt.isInteger()) {
+                adaptIntLiteral(*b.lhs, Type::intTy());
+                return rt;
+            }
+            if (b.op == ast::BinaryOp::Sub && lPtr && rPtr) {
+                if (lt != rt) {
+                    err(b.loc, llvm::Twine("subtracting incompatible pointer "
+                                           "types ") +
+                                   lt.name() + " and " + rt.name());
+                    return Type::error();
+                }
+                return Type::intTy();  // element (or byte, for rawptr) count
+            }
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' cannot combine " + lt.name() + " and " + rt.name());
+            return Type::error();
+        }
+
         if (!lt.isPointer() || !rt.isPointer()) {
             err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
                            "' cannot combine " + lt.name() + " and " + rt.name());
             return Type::error();
         }
         if (!ast::isComparison(b.op)) {
-            err(b.loc, "pointers support only == != < <= > >= for now "
-                       "(pointer arithmetic is L1.4)");
+            err(b.loc, llvm::Twine("operator '") + ast::binaryOpSymbol(b.op) +
+                           "' is not defined on pointers");
             return Type::error();
         }
         if (lt != rt) {

@@ -88,6 +88,21 @@ struct Type {
     const Type &elem() const { return *element; }     // Array / Slice
     const Type &pointee() const { return *element; }  // Pointer
 
+    // Size in bytes, C layout. 0 for `void` / an error. Scalar elements need no
+    // padding, so an array is just `length * element size`; a slice is a
+    // { ptr, i64 } pair. (Struct sizes arrive with struct types in L2.)
+    unsigned long long byteSize() const {
+        switch (kind) {
+        case TypeKind::Bool: return 1;
+        case TypeKind::Int:
+        case TypeKind::Float: return bits / 8;
+        case TypeKind::Pointer: return 8;
+        case TypeKind::Slice: return 16;
+        case TypeKind::Array: return length * element->byteSize();
+        default: return 0;
+        }
+    }
+
     bool operator==(const Type &o) const {
         if (kind != o.kind || bits != o.bits || isSigned != o.isSigned ||
             length != o.length)
