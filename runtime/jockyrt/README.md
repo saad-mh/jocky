@@ -23,10 +23,10 @@ Built as part of the top-level CMake project (`add_subdirectory(runtime/jockyrt)
 ## Status
 
 Implemented: R.1 (flat ABI), R.2 (`jkf_processes` / `jkf_process_count`),
-R.3 privilege (`jkf_enable_debug_privilege`).
+R.3 (`jkf_enable_debug_privilege`, `jkf_open` / `jkf_close`), R.4
+(`jkf_region_at`), R.5 (`jkf_read`).
 
-Next: R.3 open/close, R.4 region walk, R.5 read, R.6 modules, R.7 threads,
-R.9 dump container.
+Next: R.6 modules, R.7 threads, R.9 dump container, R.8 snapshot.
 
 ## Platforms
 

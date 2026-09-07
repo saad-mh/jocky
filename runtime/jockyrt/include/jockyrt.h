@@ -38,6 +38,7 @@ extern "C" {
 #define JKF_ABI_VERSION 1u
 
 #define JKF_PROCESS_RECORD_VERSION 1u
+#define JKF_ACCESS_RECORD_VERSION  1u
 #define JKF_REGION_RECORD_VERSION  1u
 #define JKF_MODULE_RECORD_VERSION  1u
 #define JKF_THREAD_RECORD_VERSION  1u
@@ -76,8 +77,12 @@ typedef struct JkfProcessRecord {
 } JkfProcessRecord;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-_Static_assert(sizeof(JkfProcessRecord) == 20, "JkfProcessRecord layout");
+#  define JKF_STATIC_ASSERT(c, m) _Static_assert(c, m)
+#else
+#  define JKF_STATIC_ASSERT(c, m)
 #endif
+
+JKF_STATIC_ASSERT(sizeof(JkfProcessRecord) == 20, "JkfProcessRecord layout");
 
 enum {
     JKF_PROC_WOW64          = 1u << 0,  /* a 32-bit process on 64-bit Windows */
@@ -100,6 +105,69 @@ int jkf_processes(void *out, uint64_t cap);
  * privilege is held afterwards, 0 if it is not (e.g. unelevated), or a negative
  * JKF_E_* on an OS failure. */
 int jkf_enable_debug_privilege(void);
+
+/* ---- R.3  target open / close --------------------------------------- */
+
+/* How much access jkf_open actually got. Layout: abi.md "JkfAccessRecord".
+ * 16 bytes. */
+typedef struct JkfAccessRecord {
+    uint32_t version;      /* JKF_ACCESS_RECORD_VERSION */
+    uint32_t level;        /* JKF_ACCESS_* */
+    uint32_t grantedMask;  /* the Win32 PROCESS_* mask the open succeeded with */
+    uint32_t reserved;     /* 0 */
+} JkfAccessRecord;
+
+JKF_STATIC_ASSERT(sizeof(JkfAccessRecord) == 16, "JkfAccessRecord layout");
+
+enum {
+    JKF_ACCESS_NONE       = 0,
+    JKF_ACCESS_QUERY      = 1,  /* headers / regions only - reads will fail */
+    JKF_ACCESS_READ       = 2,  /* query + VM read                          */
+    JKF_ACCESS_READ_WRITE = 3   /* + VM write (test harness only)           */
+};
+
+/* Opens `pid` for inspection. `want_write` must be 0 in production; it is only
+ * for the fixture harness. If `accessOut` is non-null (and `accessCap` >=
+ * sizeof(JkfAccessRecord)) it receives a JkfAccessRecord describing the level
+ * granted, so the scanner can record "queried headers only, could not read".
+ *
+ * Returns a positive handle-ish token for jkf_read / jkf_region_at / jkf_close,
+ * or a negative JKF_E_*: JKF_E_ACCESS for a PPL / higher-integrity target,
+ * JKF_E_NOTFOUND if the pid is gone. */
+int jkf_open(uint32_t pid, int want_write, void *accessOut, uint64_t accessCap);
+
+/* Closes a token from jkf_open. Returns JKF_OK, or JKF_E_BADHANDLE. */
+int jkf_close(int handle);
+
+/* ---- R.4  region walk ---------------------------------------------- */
+
+/* Layout: abi.md "JkfRegionRecord". 48 bytes, 8-byte aligned. */
+typedef struct JkfRegionRecord {
+    uint32_t version;      /* JKF_REGION_RECORD_VERSION */
+    uint32_t state;        /* MEM_COMMIT / MEM_RESERVE / MEM_FREE */
+    uint32_t type;         /* MEM_IMAGE / MEM_MAPPED / MEM_PRIVATE; 0 if free */
+    uint32_t protect;      /* PAGE_* now */
+    uint32_t allocProtect; /* PAGE_* at reservation (0 if free) */
+    uint32_t reserved;     /* 0 */
+    uint64_t base;
+    uint64_t size;
+    uint64_t allocBase;    /* the reservation this region belongs to (0 if free) */
+} JkfRegionRecord;
+
+JKF_STATIC_ASSERT(sizeof(JkfRegionRecord) == 48, "JkfRegionRecord layout");
+
+/* Writes one JkfRegionRecord for the region that contains `addr`, or the next
+ * region after it. Returns 1 on a record, 0 at the end of the user address
+ * space, or a negative JKF_E_*. The caller loops with `addr = base + size`. */
+int jkf_region_at(int handle, uint64_t addr, void *out, uint64_t cap);
+
+/* ---- R.5  read target memory ------------------------------------- */
+
+/* Reads up to `len` bytes at `addr` into `buf`. Returns the number of bytes
+ * actually read - which may be less than `len` for a partial read (a guard or
+ * no-access page in the way) - or JKF_E_FAULT if nothing at `addr` is
+ * readable. Internally chunked; never faults the caller. */
+int jkf_read(int handle, uint64_t addr, void *buf, uint64_t len);
 
 #ifdef __cplusplus
 }  /* extern "C" */

@@ -6,8 +6,10 @@
 
 add_library(jockyrt STATIC
     src/error.c
+    src/handle.c
     src/privilege.c
     src/process.c
+    src/target.c
 )
 
 target_include_directories(jockyrt

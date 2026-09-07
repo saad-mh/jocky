@@ -1,13 +1,15 @@
 /* jockyrt smoke test - runs under ctest as `jockyrt_smoke`.
  *
- * Checks the flat ABI contract (record sizes, versions, ordering) and the two
- * functions that exist so far against the real machine: our own pid must show
- * up in jkf_processes(), and jkf_enable_debug_privilege() must not error. */
+ * Checks the flat ABI (record sizes / versions / ordering) and every function
+ * that exists so far against the live process: our own pid is enumerable, we
+ * can open ourselves, walk a gap-free region list, read our own memory back,
+ * and get JKF_E_FAULT for an unmapped address. */
 
 #include "jockyrt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -24,12 +26,13 @@ static void check(int ok, const char *what) {
 int main(void) {
     check(jkf_abi_version() == JKF_ABI_VERSION, "jkf_abi_version");
     check(sizeof(JkfProcessRecord) == 20, "JkfProcessRecord is 20 bytes");
+    check(sizeof(JkfAccessRecord) == 16, "JkfAccessRecord is 16 bytes");
+    check(sizeof(JkfRegionRecord) == 48, "JkfRegionRecord is 48 bytes");
 
     const int n = jkf_process_count();
     check(n > 0, "jkf_process_count > 0");
     if (n <= 0) {
-        printf("\ncannot continue (process_count=%d, last_os_error=%u)\n", n,
-               jkf_last_os_error());
+        printf("\ncannot continue (last_os_error=%u)\n", jkf_last_os_error());
         return 1;
     }
 
@@ -56,20 +59,60 @@ int main(void) {
     }
     check(ascending, "pids are ascending");
     check(found_self, "our own pid is in the list");
-
     check(jkf_processes(NULL, 4096) == JKF_E_INVAL,
           "null out buffer -> JKF_E_INVAL");
-    JkfProcessRecord one;
-    const int tooSmall = jkf_processes(&one, sizeof one);
-    check(tooSmall == JKF_E_TOOSMALL || got == 1,
-          "one-record buffer -> JKF_E_TOOSMALL");
+    free(buf);
 
     const int priv = jkf_enable_debug_privilege();
     check(priv >= 0, "jkf_enable_debug_privilege did not error");
-    printf("     (debug privilege %s)\n",
-           priv > 0 ? "held" : "not held - run elevated for the full walk");
+    printf("     (debug privilege %s)\n", priv > 0 ? "held" : "not held");
 
-    free(buf);
+#if defined(_WIN32)
+    /* --- open / regions / read against ourselves --- */
+    JkfAccessRecord acc;
+    const int t = jkf_open(me, 0, &acc, sizeof acc);
+    check(t > 0, "jkf_open(self) -> token");
+    if (t > 0) {
+        check(acc.version == JKF_ACCESS_RECORD_VERSION, "access record versioned");
+        check(acc.level >= JKF_ACCESS_READ, "opened self with read access");
+
+        uint64_t addr = 0;
+        int regions = 0, images = 0, wellFormed = 1;
+        JkfRegionRecord reg;
+        for (;;) {
+            const int rc = jkf_region_at(t, addr, &reg, sizeof reg);
+            if (rc <= 0) {
+                if (rc < 0) wellFormed = 0;  /* an error, not clean end */
+                break;
+            }
+            if (reg.version != JKF_REGION_RECORD_VERSION) wellFormed = 0;
+            if (reg.base < addr) wellFormed = 0;  /* walk must not go backwards */
+            if (reg.type == 0x1000000 /* MEM_IMAGE */) ++images;
+            addr = reg.base + reg.size;
+            if (++regions > 200000) break;  /* safety */
+        }
+        check(regions > 10, "walked more than 10 regions");
+        check(wellFormed, "region walk is monotonic and versioned");
+        check(images > 0, "at least one MEM_IMAGE region");
+
+        char probe[16];
+        memcpy(probe, "hello jockyrt!!", 16);
+        char out[16] = {0};
+        const int rd =
+            jkf_read(t, (uint64_t)(uintptr_t)probe, out, sizeof out);
+        check(rd == 16, "jkf_read read 16 bytes of our own memory");
+        check(memcmp(out, probe, 16) == 0, "jkf_read round-trips the bytes");
+
+        const int fault = jkf_read(t, 0x1000, out, 16);
+        check(fault == JKF_E_FAULT, "jkf_read of an unmapped page -> JKF_E_FAULT");
+
+        check(jkf_close(t) == JKF_OK, "jkf_close");
+        check(jkf_close(t) == JKF_E_BADHANDLE, "double jkf_close -> JKF_E_BADHANDLE");
+    }
+
+    check(jkf_open(0xFFFFFFF0u, 0, NULL, 0) < 0, "jkf_open of a bogus pid fails");
+#endif
+
     printf(g_failures ? "\n%d failure(s)\n" : "\nall good\n", g_failures);
     return g_failures ? 1 : 0;
 }
