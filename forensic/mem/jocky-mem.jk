@@ -197,6 +197,32 @@ func heuristic_rwx(reg: ptr<RegionRec>) -> ptr<Finding> {
     return null;
 }
 
+// F.5.2: detect executable private regions not in any module (unbacked exec).
+// Caller must check the region's classification first to skip module images.
+func heuristic_exec_private(reg: ptr<RegionRec>, isInModule: bool) -> ptr<Finding> {
+    var prot = (*reg).protect;
+    var regType = (*reg).type;
+
+    // Skip if in a module or not private.
+    if (isInModule) { return null; }
+    if (regType != MEM_PRIVATE()) { return null; }
+
+    // Check for executable (skip if not executable).
+    if (is_exec(prot)) {
+        // Found an executable private region not in a module.
+    } else {
+        return null;
+    }
+
+    var result: Finding;
+    result.base = (*reg).base;
+    result.size = (*reg).size;
+    result.reason = &"exec-private"[0];
+    result.severity = 2;  // medium - could be JIT, DLL injection, or shellcode
+    var r = &result;
+    return r;
+}
+
 // ---- inventory (F.4) ---------------------------------
 
 func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
@@ -246,8 +272,16 @@ func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
             printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type, class);
             count = count + 1;
 
+            // Determine if region is in a module for heuristics.
+            var isInMod = 0;
+            if (minModBase > 0) { isInMod = 1; }
+
             // Apply heuristics.
             var finding = heuristic_rwx(&reg);
+            if (finding == null) {
+                finding = heuristic_exec_private(&reg, isInMod != 0);
+            }
+
             if (finding != null) {
                 if (findingCount < 100) {
                     var f = &findings[findingCount];
