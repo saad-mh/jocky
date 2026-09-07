@@ -19,3 +19,5 @@ compile_commands.json
 *.obj
 
 .claude/
+# CTest scratch when run from the source tree
+/Testing/

@@ -19,6 +19,10 @@ config.suffixes = [".jk"]
 # test_source_root / test_exec_root are set by the generated lit.site.cfg.py.
 
 # Substitutions. Paths are quoted because they can contain spaces.
+# Longer keys first: lit does plain string replacement in list order, so
+# "%jockyrt_libdir" must be registered before the "%jocky" prefix.
+config.substitutions.append(
+    ("%jockyrt_libdir", '"{}"'.format(config.jockyrt_lib_dir)))
 config.substitutions.append(("%jocky", '"{}"'.format(config.jocky_tool)))
 config.substitutions.append(("%FileCheck", '"{}"'.format(config.filecheck_tool)))
 config.substitutions.append(("%not", '"{}"'.format(config.not_tool)))

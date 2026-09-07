@@ -186,7 +186,11 @@ ast::ExternDecl *Parser::parseExternDecl() {
                 break;
             }
             ast::Param p;
-            if (check(TokenKind::Identifier) && current().spelling == "out") {
+            // `out` is the marker only when a real `name : type` follows it;
+            // otherwise `out` is itself the parameter name.
+            if (check(TokenKind::Identifier) && current().spelling == "out" &&
+                peek(1).kind == TokenKind::Identifier &&
+                peek(2).kind == TokenKind::Colon) {
                 p.isOut = true;
                 advance();
             }

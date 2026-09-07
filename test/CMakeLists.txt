@@ -45,6 +45,8 @@ endif()
 # (which is not known until generation time).
 set(JOCKY_TOOL "$<TARGET_FILE:jocky>")
 set(JOCKY_TEST_EXEC_ROOT "${CMAKE_CURRENT_BINARY_DIR}")
+# Directory holding jockyrt.lib, for the JOCKY <-> jockyrt integration test.
+set(JOCKYRT_LIB_DIR "$<TARGET_FILE_DIR:jockyrt>")
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in"
@@ -56,7 +58,7 @@ file(GENERATE
 
 add_custom_target(check
     COMMAND "${Python3_EXECUTABLE}" "${JOCKY_LIT}" -sv "${CMAKE_CURRENT_BINARY_DIR}"
-    DEPENDS jocky
+    DEPENDS jocky jockyrt
     USES_TERMINAL
     COMMENT "Running JOCKY lit tests")
 

@@ -1,0 +1,50 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%s" -o "%t.exe" -L %jockyrt_libdir -l jockyrt
+// RUN: "%t.exe" | %FileCheck "%s"
+//
+// The whole stack: a JOCKY program declares jockyrt's flat ABI with
+// `extern "C"`, overlays a struct on the record buffer, and agrees with the
+// library (requirement R.1 acceptance - the C smoke test and this JOCKY test
+// parse the same bytes).
+
+extern "C" jkf_abi_version() -> u32;
+extern "C" jkf_process_count() -> int;
+extern "C" jkf_processes(out: rawptr, cap: u64) -> int;
+extern "C" GetCurrentProcessId() -> u32;
+
+struct JkfProcessRecord {
+    version: u32,
+    pid: u32,
+    ppid: u32,
+    sessionId: u32,
+    flags: u32,
+}
+
+print(jkf_abi_version());              // 1
+
+var n = jkf_process_count();
+print(n > 0);                          // true
+
+var buf: char[65536];
+var got = jkf_processes(&buf[0] as rawptr, 65536u64);
+print(got == n);                       // true
+
+var recs = &buf[0] as ptr<JkfProcessRecord>;
+var me = GetCurrentProcessId();
+var found = 0;
+var badVersion = 0;
+var i = 0;
+while (i < got) {
+    var r = recs + i;
+    if (r.version != 1u32) { badVersion = 1; }
+    if (r.pid == me) { found = 1; }
+    i = i + 1;
+}
+print(badVersion);                     // 0
+print(found);                          // 1
+
+// CHECK:      1
+// CHECK-NEXT: true
+// CHECK-NEXT: true
+// CHECK-NEXT: 0
+// CHECK-NEXT: 1
