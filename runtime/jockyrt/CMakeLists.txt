@@ -7,9 +7,11 @@
 add_library(jockyrt STATIC
     src/error.c
     src/handle.c
+    src/modules.c
     src/privilege.c
     src/process.c
     src/target.c
+    src/threads.c
 )
 
 target_include_directories(jockyrt
@@ -22,9 +24,11 @@ set_target_properties(jockyrt PROPERTIES
 )
 
 if(WIN32)
-    # OpenProcessToken / LookupPrivilegeValue / AdjustTokenPrivileges live in
-    # advapi32; the Toolhelp and process APIs are in kernel32 (linked by default).
-    target_link_libraries(jockyrt PUBLIC advapi32)
+    # advapi32: token / privilege calls.
+    # psapi:    EnumProcessModulesEx / GetModuleFileNameEx / GetMappedFileName.
+    # (Toolhelp, VirtualQueryEx, ReadProcessMemory are in kernel32, linked by
+    # default; NtQueryInformationThread is resolved from ntdll at run time.)
+    target_link_libraries(jockyrt PUBLIC advapi32 psapi)
 else()
     message(WARNING
         "jockyrt targets Windows; on this platform every jkf_* call returns "

@@ -28,6 +28,8 @@ int main(void) {
     check(sizeof(JkfProcessRecord) == 20, "JkfProcessRecord is 20 bytes");
     check(sizeof(JkfAccessRecord) == 16, "JkfAccessRecord is 16 bytes");
     check(sizeof(JkfRegionRecord) == 48, "JkfRegionRecord is 48 bytes");
+    check(sizeof(JkfModuleRecord) == 40, "JkfModuleRecord is 40 bytes");
+    check(sizeof(JkfThreadRecord) == 32, "JkfThreadRecord is 32 bytes");
 
     const int n = jkf_process_count();
     check(n > 0, "jkf_process_count > 0");
@@ -105,6 +107,64 @@ int main(void) {
 
         const int fault = jkf_read(t, 0x1000, out, 16);
         check(fault == JKF_E_FAULT, "jkf_read of an unmapped page -> JKF_E_FAULT");
+
+        /* --- modules (R.6) --- */
+        const int mc = jkf_module_count(t);
+        check(mc > 0, "jkf_module_count > 0");
+
+        JkfModuleRecord mods[512];
+        char blob[64 * 1024];
+        const int mg = jkf_modules(t, mods, sizeof mods, blob, sizeof blob);
+        check(mg == mc, "jkf_modules count matches jkf_module_count");
+
+        int mainCount = 0, foundNtdll = 0, modSorted = 1;
+        uint64_t mainBase = 0, mainSize = 0;
+        for (int i = 0; i < mg; ++i) {
+            if (i && mods[i].base < mods[i - 1].base) modSorted = 0;
+            if (mods[i].flags & JKF_MOD_MAIN) {
+                ++mainCount;
+                mainBase = mods[i].base;
+                mainSize = mods[i].size;
+            }
+            const char *nm = blob + mods[i].nameOff;
+            const char *pth = blob + mods[i].pathOff;
+            if (_stricmp(nm, "ntdll.dll") == 0) {
+                foundNtdll = 1;
+                size_t pl = strlen(pth);
+                check(pl >= 9 && _stricmp(pth + pl - 9, "ntdll.dll") == 0,
+                      "ntdll path ends in ntdll.dll");
+            }
+        }
+        check(modSorted, "modules sorted by base");
+        check(mainCount == 1, "exactly one JKF_MOD_MAIN module");
+        check(foundNtdll, "ntdll.dll is in the module list");
+
+        /* --- threads (R.7) --- */
+        const int tc = jkf_thread_count(me);
+        check(tc > 0, "jkf_thread_count > 0");
+
+        JkfThreadRecord thr[512];
+        const int tg = jkf_threads(me, thr, sizeof thr);
+        check(tg == tc, "jkf_threads count matches jkf_thread_count");
+
+#if defined(_WIN32)
+        const uint32_t mytid = (uint32_t)GetCurrentThreadId();
+#else
+        const uint32_t mytid = 0;
+#endif
+        int foundTid = 0, thrSorted = 1, haveStart = 0, startInMain = 0;
+        for (int i = 0; i < tg; ++i) {
+            if (i && thr[i].tid < thr[i - 1].tid) thrSorted = 0;
+            if (thr[i].tid == mytid) foundTid = 1;
+            if (thr[i].startAddr != 0) haveStart = 1;
+            if (mainSize && thr[i].startAddr >= mainBase &&
+                thr[i].startAddr < mainBase + mainSize)
+                startInMain = 1;
+        }
+        check(thrSorted, "threads sorted by tid");
+        check(foundTid, "our own tid is in the thread list");
+        check(haveStart, "at least one thread has a Win32 start address");
+        check(startInMain, "a thread's start address is inside the main module");
 
         check(jkf_close(t) == JKF_OK, "jkf_close");
         check(jkf_close(t) == JKF_E_BADHANDLE, "double jkf_close -> JKF_E_BADHANDLE");

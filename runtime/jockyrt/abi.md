@@ -106,6 +106,38 @@ Win32 `MEM_*` / `PAGE_*` constants (not re-encoded).
 space. The caller advances `addr = base + size`; the sequence is strictly
 increasing and gap-free over the whole range.
 
+### JkfModuleRecord — 40 bytes, 8-byte aligned (R.6)
+
+Written by `jkf_modules`, ascending by `base`. `nameOff` / `pathOff` are byte
+offsets into the parallel `names` blob (packed NUL-terminated UTF-8 strings).
+
+| offset | size | field        | notes                                        |
+|-------:|-----:|--------------|----------------------------------------------|
+| 0      | 4    | `version`    | `JKF_MODULE_RECORD_VERSION` (1)              |
+| 4      | 4    | `nameOff`    | -> basename (e.g. `ntdll.dll`)               |
+| 8      | 4    | `pathOff`    | -> full path (e.g. `C:\Windows\System32\ntdll.dll`) |
+| 12     | 4    | `flags`      | `JKF_MOD_MAIN` (bit 0) for the process image |
+| 16     | 8    | `base`       | load address                                 |
+| 24     | 8    | `size`       | `SizeOfImage`                                |
+| 32     | 8    | `entryPoint` |                                              |
+
+`jkf_mapped_name` writes one NUL-terminated UTF-8 path into `names` and returns
+its length (no NUL). For a file-backed mapping outside the loader list the path
+is the NT device form (`\Device\HarddiskVolumeN\...`).
+
+### JkfThreadRecord — 32 bytes, 8-byte aligned (R.7)
+
+Written by `jkf_threads`, ascending by `tid`.
+
+| offset | size | field       | notes                                          |
+|-------:|-----:|-------------|------------------------------------------------|
+| 0      | 4    | `version`   | `JKF_THREAD_RECORD_VERSION` (1)                |
+| 4      | 4    | `tid`       |                                                |
+| 8      | 4    | `flags`     | reserved (0)                                   |
+| 12     | 4    | `reserved`  | 0                                              |
+| 16     | 8    | `startAddr` | `NtQueryInformationThread(Win32StartAddress)`; 0 if unreadable |
+| 24     | 8    | `teb`       | TEB base; 0 if unreadable                      |
+
 ## Functions so far
 
 | function                        | requirement | notes                          |
@@ -116,11 +148,14 @@ increasing and gap-free over the whole range.
 | `jkf_processes`                 | R.2         | ascending by pid               |
 | `jkf_enable_debug_privilege`    | R.3         | `1` held / `0` not / `<0` OS error |
 | `jkf_open` / `jkf_close`        | R.3         | small-int token, not a HANDLE  |
-| `jkf_region_at`                 | R.4         |                                |
+| `jkf_region_at`                 | R.4         | ascending, gap-free            |
 | `jkf_read`                      | R.5         | chunked, guard-aware, `< len` on partial |
+| `jkf_module_count` / `jkf_modules` | R.6      | ascending by base; `names` blob |
+| `jkf_mapped_name`               | R.6         | backing file of an address     |
+| `jkf_thread_count` / `jkf_threads` | R.7      | ascending by tid               |
 
 ## Records still to come
 
-`JkfModuleRecord` (R.6), `JkfThreadRecord` (R.7), and the dump container header
-/ region table (R.9, spelled out in `dump-format.md`). Their
-`JKF_*_RECORD_VERSION` constants already exist in the header at value 1.
+The dump container header / region table (R.9, spelled out in
+`dump-format.md`). Its `JKF_*_RECORD_VERSION` constants live in the header at
+value 1.

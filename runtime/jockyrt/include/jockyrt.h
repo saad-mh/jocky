@@ -169,6 +169,60 @@ int jkf_region_at(int handle, uint64_t addr, void *out, uint64_t cap);
  * readable. Internally chunked; never faults the caller. */
 int jkf_read(int handle, uint64_t addr, void *buf, uint64_t len);
 
+/* ---- R.6  module list -------------------------------------------- */
+
+/* Layout: abi.md "JkfModuleRecord". 40 bytes, 8-byte aligned. `nameOff` /
+ * `pathOff` are byte offsets into the `names` blob a jkf_modules() call fills
+ * in parallel (each string UTF-8, NUL-terminated). */
+typedef struct JkfModuleRecord {
+    uint32_t version;      /* JKF_MODULE_RECORD_VERSION */
+    uint32_t nameOff;      /* -> basename in the names blob    */
+    uint32_t pathOff;      /* -> full path in the names blob   */
+    uint32_t flags;        /* JKF_MOD_* */
+    uint64_t base;
+    uint64_t size;         /* SizeOfImage */
+    uint64_t entryPoint;
+} JkfModuleRecord;
+
+JKF_STATIC_ASSERT(sizeof(JkfModuleRecord) == 40, "JkfModuleRecord layout");
+
+enum { JKF_MOD_MAIN = 1u << 0 };  /* the process's own image */
+
+/* Number of loader modules jkf_modules() would return. */
+int jkf_module_count(int handle);
+
+/* Fills `out` with JkfModuleRecord entries (ascending by base) and `names` with
+ * the packed UTF-8 name/path blob they point into. Returns the module count, or
+ * JKF_E_TOOSMALL if either buffer is short (nothing is written then; grow and
+ * retry - 64 KiB of `names` covers a normal process). */
+int jkf_modules(int handle, void *out, uint64_t outCap, void *names,
+                uint64_t namesCap);
+
+/* The backing file of the mapping that contains `addr` (for a region not in the
+ * loader list). Writes a NUL-terminated UTF-8 path into `names` and returns its
+ * length in bytes (excluding the NUL), JKF_E_NOTFOUND if `addr` is not
+ * file-backed, or JKF_E_TOOSMALL. */
+int jkf_mapped_name(int handle, uint64_t addr, void *names, uint64_t namesCap);
+
+/* ---- R.7  thread enumeration --------------------------------------- */
+
+/* Layout: abi.md "JkfThreadRecord". 32 bytes, 8-byte aligned. */
+typedef struct JkfThreadRecord {
+    uint32_t version;      /* JKF_THREAD_RECORD_VERSION */
+    uint32_t tid;
+    uint32_t flags;        /* reserved (0) */
+    uint32_t reserved;     /* 0 */
+    uint64_t startAddr;    /* Win32 start address (0 if it could not be read) */
+    uint64_t teb;          /* TEB base (0 if it could not be read) */
+} JkfThreadRecord;
+
+JKF_STATIC_ASSERT(sizeof(JkfThreadRecord) == 32, "JkfThreadRecord layout");
+
+/* Threads owned by `pid`. Takes a pid, not a jkf_open handle - it opens the
+ * threads it needs itself. */
+int jkf_thread_count(uint32_t pid);
+int jkf_threads(uint32_t pid, void *out, uint64_t cap);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
