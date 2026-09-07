@@ -164,6 +164,12 @@ private:
             line(")");
             break;
         }
+        case NodeKind::BreakStmt:
+            line("(break)");
+            break;
+        case NodeKind::ContinueStmt:
+            line("(continue)");
+            break;
         case NodeKind::Block:
             block(static_cast<const Block &>(s));
             break;

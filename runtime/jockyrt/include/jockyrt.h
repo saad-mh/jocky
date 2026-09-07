@@ -67,6 +67,21 @@ enum {
  * JKF_E_OS. */
 uint32_t jkf_last_os_error(void);
 
+/* ---- tool helpers (not a numbered requirement) --------------------- */
+
+/* Packs this process's argv as NUL-separated UTF-8 into `buf` and returns the
+ * argument count (argv[0] included). JKF_E_TOOSMALL if `buf` is short. Lets a
+ * JOCKY `main` (which has no argv) parse a command line. */
+int jkf_args(void *buf, uint64_t cap);
+
+/* The main-image basename (UTF-8, e.g. "notepad.exe") of `pid`. Returns its
+ * length (no NUL), JKF_E_NOTFOUND, or JKF_E_TOOSMALL. */
+int jkf_process_name(uint32_t pid, void *buf, uint64_t cap);
+
+/* The pid of the first process whose image basename case-insensitively equals
+ * `name` (UTF-8), or JKF_E_NOTFOUND. */
+int jkf_pid_by_name(const char *name);
+
 /* ---- R.2  process enumeration -------------------------------------- */
 
 /* Layout: see abi.md "JkfProcessRecord". 20 bytes, 4-byte aligned. */

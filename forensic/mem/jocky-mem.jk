@@ -1,0 +1,243 @@
+// jocky-mem - the JOCKY forensic memory tool (Part 3 of docs/requirements.md).
+//
+// Written in JOCKY, linked against jockyrt for the process / region / module /
+// thread / dump primitives and against the C runtime + Win32 for formatted
+// output. One source file (JOCKY compiles a single file).
+//
+//   jocky-mem inventory <pid|name>
+//   jocky-mem selftest                 (inventories this process; for CI)
+//
+// `scan`, `dump`, and `scan-dump` land in later increments.
+
+// ---- C runtime / Win32 --------------------------------------------------
+
+extern "C" printf(fmt: ptr<char>, ...) -> i32;
+extern "C" strcmp(a: ptr<char>, b: ptr<char>) -> i32;
+extern "C" strtoul(s: ptr<char>, end: ptr<ptr<char>>, base: i32) -> u32;
+extern "C" GetCurrentProcessId() -> u32;
+
+// ---- jockyrt ----------------------------------------------------------
+
+extern "C" jkf_args(buf: rawptr, cap: u64) -> int;
+extern "C" jkf_pid_by_name(name: ptr<char>) -> int;
+extern "C" jkf_process_name(pid: u32, buf: rawptr, cap: u64) -> int;
+extern "C" jkf_open(pid: u32, want_write: bool, accessOut: rawptr, cap: u64) -> int;
+extern "C" jkf_close(handle: int) -> int;
+extern "C" jkf_region_at(handle: int, addr: u64, out: rawptr, cap: u64) -> int;
+
+// jockyrt records, overlaid on the buffers jockyrt fills (see abi.md).
+
+struct AccessRec {
+    version: u32,
+    level: u32,
+    grantedMask: u32,
+    reserved: u32,
+}
+
+struct RegionRec {
+    version: u32,
+    state: u32,
+    type: u32,
+    protect: u32,
+    allocProtect: u32,
+    reserved: u32,
+    base: u64,
+    size: u64,
+    allocBase: u64,
+}
+
+// ---- Win32 memory constants (JOCKY has no `const`, so: functions) ------
+
+func MEM_COMMIT() -> u32  { return 0x1000u32; }
+func MEM_RESERVE() -> u32 { return 0x2000u32; }
+func MEM_FREE() -> u32    { return 0x10000u32; }
+func MEM_IMAGE() -> u32   { return 0x1000000u32; }
+func MEM_MAPPED() -> u32  { return 0x40000u32; }
+func MEM_PRIVATE() -> u32 { return 0x20000u32; }
+
+func PAGE_NOACCESS() -> u32          { return 0x01u32; }
+func PAGE_EXECUTE() -> u32           { return 0x10u32; }
+func PAGE_EXECUTE_READ() -> u32      { return 0x20u32; }
+func PAGE_EXECUTE_READWRITE() -> u32 { return 0x40u32; }
+func PAGE_EXECUTE_WRITECOPY() -> u32 { return 0x80u32; }
+func PAGE_GUARD() -> u32             { return 0x100u32; }
+
+// True if `protect` (masked of PAGE_GUARD etc.) allows execution.
+func is_exec(protect: u32) -> bool {
+    var p = protect & 0xFFu32;   // low byte holds the access bits
+    if (p == PAGE_EXECUTE()) { return true; }
+    if (p == PAGE_EXECUTE_READ()) { return true; }
+    if (p == PAGE_EXECUTE_READWRITE()) { return true; }
+    if (p == PAGE_EXECUTE_WRITECOPY()) { return true; }
+    return false;
+}
+
+func is_writable(protect: u32) -> bool {
+    var p = protect & 0xFFu32;
+    if (p == 0x04u32) { return true; }  // PAGE_READWRITE
+    if (p == 0x08u32) { return true; }  // PAGE_WRITECOPY
+    if (p == PAGE_EXECUTE_READWRITE()) { return true; }
+    if (p == PAGE_EXECUTE_WRITECOPY()) { return true; }
+    return false;
+}
+
+// ---- a tiny argv over jkf_args' NUL-separated blob --------------------
+
+// Fills `slots` with pointers to each argument inside `blob`. Returns argc.
+func split_args(blob: ptr<char>, argc: int, slots: ptr<ptr<char>>) -> int {
+    var off = 0;
+    var i = 0;
+    while (i < argc) {
+        var p = blob + off;
+        slots + i;                       // (index target computed below)
+        var cur = slots + i;
+        *cur = p;
+        // walk to the NUL that ends this argument
+        while (*(blob + off) != (0 as char)) {
+            off = off + 1;
+        }
+        off = off + 1;
+        i = i + 1;
+    }
+    return argc;
+}
+
+// ---- target resolution --------------------------------------------
+
+// `arg` is a decimal pid or an image name. Returns a pid, or < 0.
+func resolve_target(arg: ptr<char>) -> int {
+    var c0 = *arg;
+    if (c0 >= (48 as char)) {            // '0'
+        if (c0 <= (57 as char)) {        // '9'
+            return strtoul(arg, null, 10) as int;
+        }
+    }
+    return jkf_pid_by_name(arg);
+}
+
+// ---- inventory (F.4, minimal for now) ---------------------------------
+
+func inventory(handle: int) -> int {
+    var hdr = "        BASE               SIZE  STATE  TYPE      PROT  XW\n";
+    printf(&hdr[0], 0);
+
+    var rowfmt = "  %016llx  %12llu  %5x  %08x  %04x  %c%c\n";
+    var reg: RegionRec;
+    var addr = 0 as u64;
+    var count = 0;
+
+    while (true) {
+        var rc = jkf_region_at(handle, addr, &reg as rawptr, 48 as u64);
+        if (rc <= 0) { break; }
+
+        if (reg.state == MEM_COMMIT()) {
+            var xc = 45 as i32;          // '-'
+            if (is_exec(reg.protect)) { xc = 88 as i32; }   // 'X'
+            var wc = 45 as i32;
+            if (is_writable(reg.protect)) { wc = 87 as i32; }  // 'W'
+            printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type,
+                   reg.protect, xc, wc);
+            count = count + 1;
+        }
+
+        addr = reg.base + reg.size;
+        if (count > 500000) { break; }
+    }
+    return count;
+}
+
+// ---- open + dispatch --------------------------------------------------
+
+func usage() -> int {
+    var u = "usage: jocky-mem <inventory|selftest> <pid|name>\n";
+    printf(&u[0], 0);
+    return 2;
+}
+
+func run_inventory(pid: u32) -> int {
+    var acc: AccessRec;
+    var h = jkf_open(pid, false, &acc as rawptr, 16 as u64);
+    if (h < 0) {
+        var e = "jocky-mem: cannot open pid %u (error %d)\n";
+        printf(&e[0], pid, h);
+        return 1;
+    }
+    var nm: char[260];
+    var nl = jkf_process_name(pid, &nm[0] as rawptr, 260 as u64);
+    if (nl < 0) { nm[0] = 0 as char; }
+    var banner = "jocky-mem inventory  pid=%u  name=%s  access-level=%u\n";
+    printf(&banner[0], pid, &nm[0], acc.level);
+
+    var n = inventory(h);
+    var tail = "\n%d committed regions\n";
+    printf(&tail[0], n);
+
+    jkf_close(h);
+    return 0;
+}
+
+func run_selftest() -> int {
+    var pid = GetCurrentProcessId();
+    var acc: AccessRec;
+    var h = jkf_open(pid, false, &acc as rawptr, 16 as u64);
+    if (h < 0) { return 1; }
+
+    var reg: RegionRec;
+    var addr = 0 as u64;
+    var regions = 0;
+    var images = 0;
+    while (true) {
+        var rc = jkf_region_at(h, addr, &reg as rawptr, 48 as u64);
+        if (rc <= 0) { break; }
+        if (reg.state == MEM_COMMIT()) { regions = regions + 1; }
+        if (reg.type == MEM_IMAGE()) { images = images + 1; }
+        addr = reg.base + reg.size;
+        if (regions > 500000) { break; }
+    }
+    jkf_close(h);
+
+    var ok = 0;
+    if (regions > 10) { if (images > 0) { ok = 1; } }
+    if (ok == 1) {
+        var m = "SELFTEST OK  (%d committed regions, %d image regions)\n";
+        printf(&m[0], regions, images);
+        return 0;
+    }
+    var f = "SELFTEST FAIL  (regions=%d images=%d)\n";
+    printf(&f[0], regions, images);
+    return 1;
+}
+
+// ---- main -----------------------------------------------------------
+
+var blob: char[8192];
+var argc = jkf_args(&blob[0] as rawptr, 8192u64);
+var slots: ptr<char>[64];
+
+if (argc < 2) {
+    return usage();
+}
+
+split_args(&blob[0], argc, &slots[0]);
+
+var cmd = slots[1];
+
+if (strcmp(cmd, &"selftest"[0]) == 0) {
+    return run_selftest();
+}
+
+if (argc < 3) {
+    return usage();
+}
+
+if (strcmp(cmd, &"inventory"[0]) == 0) {
+    var pid = resolve_target(slots[2]);
+    if (pid < 0) {
+        var e = "jocky-mem: no process '%s'\n";
+        printf(&e[0], slots[2]);
+        return 2;
+    }
+    return run_inventory(pid as u32);
+}
+
+return usage();
