@@ -173,6 +173,64 @@ int main(void) {
     check(jkf_open(0xFFFFFFF0u, 0, NULL, 0) < 0, "jkf_open of a bogus pid fails");
 #endif
 
+    /* --- dump container (R.9): write, reopen, reproduce byte-for-byte --- */
+    check(sizeof(JkfDumpHeader) == 128, "JkfDumpHeader is 128 bytes");
+    check(sizeof(JkfDumpRegionEntry) == 32, "JkfDumpRegionEntry is 32 bytes");
+    {
+        const char *path = "jockyrt_dump_smoke.bin";
+        char a[16], b[32];
+        memset(a, 'A', sizeof a);
+        memset(b, 'B', sizeof b);
+
+        const int w = jkf_dump_open_write(path, 4321u, "target.exe");
+        check(w > 0, "jkf_dump_open_write");
+        if (w > 0) {
+            check(jkf_dump_put(w, 0x1000, 0x1000, 0u, a, sizeof a) == JKF_OK,
+                  "jkf_dump_put region 0");
+            check(jkf_dump_put(w, 0x8000, 0x2000, 1u, b, sizeof b) == JKF_OK,
+                  "jkf_dump_put region 1");
+            check(jkf_dump_put(w, 0xF000, 0x1000, 2u, NULL, 0) == JKF_OK,
+                  "jkf_dump_put unreadable region 2");
+            check(jkf_dump_close(w) == JKF_OK, "jkf_dump_close (write)");
+        }
+
+        const int r = jkf_dump_open_read(path);
+        check(r > 0, "jkf_dump_open_read");
+        if (r > 0) {
+            JkfDumpHeader h;
+            check(jkf_dump_header(r, &h, sizeof h) == JKF_OK, "jkf_dump_header");
+            check(memcmp(h.magic, "JKYDUMP", 7) == 0, "dump magic");
+            check(h.formatVersion == JKF_DUMP_FORMAT_VERSION, "dump format version");
+            check(h.targetPid == 4321u, "dump target pid");
+            check(h.regionCount == 3, "dump region count in header");
+            check(h.totalBlobBytes == 48, "dump total blob bytes");
+            check(strcmp(h.imageName, "target.exe") == 0, "dump image name");
+            check(jkf_dump_region_count(r) == 3, "jkf_dump_region_count");
+
+            const uint64_t wantBase[3] = {0x1000, 0x8000, 0xF000};
+            const uint32_t wantMeta[3] = {0, 1, 2};
+            const uint64_t wantBlob[3] = {16, 32, 0};
+            int allGood = 1;
+            char rb[64];
+            for (uint32_t i = 0; i < 3; ++i) {
+                JkfDumpRegionEntry e;
+                if (jkf_dump_region(r, i, &e, sizeof e) != JKF_OK) allGood = 0;
+                if (e.base != wantBase[i] || e.meta != wantMeta[i] ||
+                    e.blobLen != wantBlob[i])
+                    allGood = 0;
+                const int got = jkf_dump_read(r, i, rb, sizeof rb);
+                if (got != (int)wantBlob[i]) allGood = 0;
+                if (i == 0 && (got != 16 || memcmp(rb, a, 16) != 0)) allGood = 0;
+                if (i == 1 && (got != 32 || memcmp(rb, b, 32) != 0)) allGood = 0;
+            }
+            check(allGood, "every region entry and blob round-trips");
+            check(jkf_dump_region(r, 9, rb, sizeof rb) == JKF_E_NOTFOUND,
+                  "out-of-range region -> JKF_E_NOTFOUND");
+            check(jkf_dump_close(r) == JKF_OK, "jkf_dump_close (read)");
+        }
+        remove(path);
+    }
+
     printf(g_failures ? "\n%d failure(s)\n" : "\nall good\n", g_failures);
     return g_failures ? 1 : 0;
 }

@@ -42,6 +42,8 @@ extern "C" {
 #define JKF_REGION_RECORD_VERSION  1u
 #define JKF_MODULE_RECORD_VERSION  1u
 #define JKF_THREAD_RECORD_VERSION  1u
+#define JKF_DUMP_FORMAT_VERSION    1u
+#define JKF_DUMP_ENTRY_VERSION     1u
 
 uint32_t jkf_abi_version(void);
 
@@ -222,6 +224,76 @@ JKF_STATIC_ASSERT(sizeof(JkfThreadRecord) == 32, "JkfThreadRecord layout");
  * threads it needs itself. */
 int jkf_thread_count(uint32_t pid);
 int jkf_threads(uint32_t pid, void *out, uint64_t cap);
+
+/* ---- R.9  dump container --------------------------------------------- */
+
+/* On-disk layout (also spelled out in dump-format.md):
+ *
+ *   [ JkfDumpHeader ]                              at file offset 0
+ *   repeated regionCount times:
+ *     [ JkfDumpRegionEntry ] [ blobLen raw bytes ]
+ *
+ * A JOCKY scanner can reopen a dump offline and rebuild the region inventory
+ * with the target gone. */
+
+typedef struct JkfDumpHeader {
+    char     magic[8];         /* "JKYDUMP\0" */
+    uint32_t formatVersion;    /* JKF_DUMP_FORMAT_VERSION */
+    uint32_t headerSize;       /* sizeof(JkfDumpHeader) == 128 */
+    uint32_t targetPid;
+    uint32_t regionCount;      /* filled in at jkf_dump_close */
+    uint64_t timestamp;        /* Windows FILETIME (100ns ticks since 1601) */
+    uint64_t totalBlobBytes;   /* filled in at jkf_dump_close */
+    char     imageName[72];    /* target main-image basename, UTF-8, NUL-padded */
+    uint8_t  reserved[16];     /* 0 */
+} JkfDumpHeader;
+
+JKF_STATIC_ASSERT(sizeof(JkfDumpHeader) == 128, "JkfDumpHeader layout");
+
+typedef struct JkfDumpRegionEntry {
+    uint32_t version;          /* JKF_DUMP_ENTRY_VERSION */
+    uint32_t meta;             /* caller tag - e.g. F.2 per-region read status */
+    uint64_t base;
+    uint64_t size;             /* the region's full size */
+    uint64_t blobLen;          /* raw bytes stored after this entry (0..size) */
+} JkfDumpRegionEntry;
+
+JKF_STATIC_ASSERT(sizeof(JkfDumpRegionEntry) == 32, "JkfDumpRegionEntry layout");
+
+/* --- write side --- */
+
+/* Creates `path` (UTF-8) and writes the header. `imageName` may be NULL.
+ * Returns a positive dump-write token, or a negative JKF_E_*. */
+int jkf_dump_open_write(const char *path, uint32_t targetPid,
+                        const char *imageName);
+
+/* Appends one region: a JkfDumpRegionEntry with `base` / `size` / `meta`,
+ * followed by `len` bytes from `buf` (pass buf=NULL, len=0 for an unreadable
+ * region - the entry is still recorded). Returns JKF_OK. */
+int jkf_dump_put(int handle, uint64_t base, uint64_t size, uint32_t meta,
+                 const void *buf, uint64_t len);
+
+/* --- read side --- */
+
+/* Opens an existing dump (UTF-8 path) and indexes it. Returns a positive
+ * dump-read token. */
+int jkf_dump_open_read(const char *path);
+
+/* Copies the JkfDumpHeader into `out`. */
+int jkf_dump_header(int handle, void *out, uint64_t cap);
+
+int jkf_dump_region_count(int handle);
+
+/* Copies region `index`'s JkfDumpRegionEntry into `out`. */
+int jkf_dump_region(int handle, uint32_t index, void *out, uint64_t cap);
+
+/* Copies region `index`'s stored bytes into `buf` and returns how many were
+ * copied (min(blobLen, cap)). */
+int jkf_dump_read(int handle, uint32_t index, void *buf, uint64_t cap);
+
+/* Closes a read or write token from jkf_dump_open_*; for a write token this is
+ * where regionCount / totalBlobBytes get patched into the header. */
+int jkf_dump_close(int handle);
 
 #ifdef __cplusplus
 }  /* extern "C" */

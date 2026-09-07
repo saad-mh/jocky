@@ -153,9 +153,8 @@ Written by `jkf_threads`, ascending by `tid`.
 | `jkf_module_count` / `jkf_modules` | R.6      | ascending by base; `names` blob |
 | `jkf_mapped_name`               | R.6         | backing file of an address     |
 | `jkf_thread_count` / `jkf_threads` | R.7      | ascending by tid               |
+| `jkf_dump_open_write` / `jkf_dump_put` / `jkf_dump_close` | R.9 | see `dump-format.md` |
+| `jkf_dump_open_read` / `jkf_dump_header` / `jkf_dump_region` / `jkf_dump_read` | R.9 | offline replay |
 
-## Records still to come
-
-The dump container header / region table (R.9, spelled out in
-`dump-format.md`). Its `JKF_*_RECORD_VERSION` constants live in the header at
-value 1.
+The dump container's on-disk layout (`JkfDumpHeader`, `JkfDumpRegionEntry`) is
+in `dump-format.md`.

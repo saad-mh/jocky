@@ -5,6 +5,7 @@
 # explicitly and grow one requirement at a time.
 
 add_library(jockyrt STATIC
+    src/dump.c
     src/error.c
     src/handle.c
     src/modules.c

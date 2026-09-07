@@ -9,6 +9,7 @@ linked into forensic builds (Part 3 of `docs/requirements.md`).
   `-(error)`.
 - **`abi.md`** — the normative record layouts (offsets, sizes, `flags` bits) a
   JOCKY `struct` overlay must match.
+- **`dump-format.md`** — the `.jkd` dump container's on-disk layout (R.9).
 - **`src/`** — one file per area (`process.c`, `privilege.c`, `error.c`, ...).
 - **`test/smoke.c`** — a ctest-registered self-check against the live machine.
 
@@ -22,12 +23,9 @@ Built as part of the top-level CMake project (`add_subdirectory(runtime/jockyrt)
 
 ## Status
 
-Implemented: R.1 (flat ABI), R.2 (`jkf_processes`), R.3
-(`jkf_enable_debug_privilege`, `jkf_open` / `jkf_close`), R.4
-(`jkf_region_at`), R.5 (`jkf_read`), R.6 (`jkf_modules`, `jkf_mapped_name`),
-R.7 (`jkf_threads`).
+Implemented: R.1–R.7 and R.9 (`jkf_dump_*`, format in `dump-format.md`).
 
-Next: R.9 dump container, R.8 snapshot.
+Not yet: R.8 (`PssCaptureSnapshot`, a SHOULD).
 
 ## Platforms
 
