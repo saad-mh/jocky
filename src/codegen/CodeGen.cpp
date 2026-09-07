@@ -321,6 +321,18 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
         builder_.CreateRet(v);
         return;
     }
+    case ast::NodeKind::BreakStmt:
+        if (loops_.empty())
+            error(stmt.loc, "internal: 'break' outside a loop in codegen");
+        else
+            builder_.CreateBr(loops_.back().breakTarget);
+        return;
+    case ast::NodeKind::ContinueStmt:
+        if (loops_.empty())
+            error(stmt.loc, "internal: 'continue' outside a loop in codegen");
+        else
+            builder_.CreateBr(loops_.back().continueTarget);
+        return;
     case ast::NodeKind::Block:
         lowerBlock(static_cast<const ast::Block &>(stmt));
         return;
@@ -369,7 +381,9 @@ void CodeGen::lowerWhile(const ast::WhileStmt &stmt) {
     builder_.CreateCondBr(cond, bodyBB, endBB);
 
     builder_.SetInsertPoint(bodyBB);
+    loops_.push_back({condBB, endBB});  // continue -> cond, break -> end
     lowerBlock(*stmt.body);
+    loops_.pop_back();
     if (!blockIsTerminated(builder_)) builder_.CreateBr(condBB);
 
     builder_.SetInsertPoint(endBB);

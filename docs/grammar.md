@@ -31,8 +31,8 @@ milestone plan.
                (`int`, `char`, `bool`, `double`, `float`, `i8`..`i64`,
                `u8`..`u64`, `void`) are ordinary identifiers, recognised only
                in type position.
-    keywords   func  var  if  else  while  return  as  true  false  null
-               sizeof  offsetof  struct  extern
+    keywords   func  var  if  else  while  return  break  continue
+               as  true  false  null  sizeof  offsetof  struct  extern
                (`link` and `out` are contextual - keywords only in position)
     symbols    ( ) { } [ ] . , : ; ->  =  + - * / %  & | ^ ~
                == !=  < <= > >=   (`<<` / `>>` are two adjacent `<` / `>`)
@@ -74,6 +74,8 @@ ordinary identifier that codegen treats as a builtin.
                   | ifStmt
                   | whileStmt
                   | returnStmt
+                  | 'break' ';'
+                  | 'continue' ';'
                   | block
                   | assignStmt
                   | exprStmt
@@ -222,6 +224,8 @@ A literal with a suffix, and every other expression, has one definite type.
   one argument and picks its format from the argument's type (a `char[N]` /
   `char[]` prints as a string). Top-level statements form an implicit `main`
   that returns `int` (the exit code); declaring `main` yourself is an error.
+- `break` leaves the innermost `while`; `continue` jumps to its condition. Both
+  are an error outside a loop.
 
 ### Pipeline
 

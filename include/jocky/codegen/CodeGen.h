@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
@@ -127,6 +128,13 @@ private:
     llvm::StringMap<llvm::Function *> functions_;
     llvm::StringMap<Local> locals_;  // reset per function
     ast::Type currentReturn_;        // return type of the function being lowered
+
+    // Innermost-last stack of enclosing loops, for `break` / `continue`.
+    struct LoopTargets {
+        llvm::BasicBlock *continueTarget;  // the loop's condition block
+        llvm::BasicBlock *breakTarget;     // the loop's exit block
+    };
+    std::vector<LoopTargets> loops_;
 
     llvm::Function *mainFn_ = nullptr;  // the implicit main
     llvm::Function *printfFn_ = nullptr;
