@@ -63,6 +63,14 @@ struct ModuleRec {
     entryPoint: u64,
 }
 
+// A single detection finding (F.5-F.6).
+struct Finding {
+    base: u64,
+    size: u64,
+    reason: ptr<char>,       // short code like "rwx" or "write-exec"
+    severity: int,           // 1 = low, 2 = med, 3 = high
+}
+
 // ---- Win32 memory constants (JOCKY has no `const`, so: functions) ------
 
 func MEM_COMMIT() -> u32  { return 0x1000u32; }
@@ -151,6 +159,44 @@ func classify_region(reg: ptr<RegionRec>, modBase: u64, modSize: u64) -> ptr<cha
     return &"private-data"[0];
 }
 
+// ---- heuristics (F.5) ---------------------------------
+
+// F.5.1: detect RWX and write-then-exec private memory.
+// Returns a Finding pointer if found, null otherwise. Result is in a static
+// buffer that must be read before the next call.
+func heuristic_rwx(reg: ptr<RegionRec>) -> ptr<Finding> {
+    var prot = (*reg).protect;
+    var allocProt = (*reg).allocProtect;
+    var regType = (*reg).type;
+
+    // Skip non-private regions.
+    if (regType != MEM_PRIVATE()) { return null; }
+
+    var result: Finding;
+    result.base = (*reg).base;
+    result.size = (*reg).size;
+
+    // Check for direct RWX: PAGE_EXECUTE_READWRITE.
+    if ((prot & 0xFFu32) == 0x40u32) {
+        result.reason = &"rwx"[0];
+        result.severity = 3;
+        var r = &result;
+        return r;
+    }
+
+    // Check for write-then-exec: was writable (at allocation), now exec.
+    if (is_writable(allocProt)) {
+        if (is_exec(prot)) {
+            result.reason = &"write-exec"[0];
+            result.severity = 3;
+            var r = &result;
+            return r;
+        }
+    }
+
+    return null;
+}
+
 // ---- inventory (F.4) ---------------------------------
 
 func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
@@ -164,10 +210,12 @@ func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
     var modCount = jkf_modules(handle, modBuf, modCap, &modNames[0] as rawptr, 65536u64);
     if (modCount < 0) { modCount = 0; }
 
-    // Walk regions.
+    // Walk regions, apply heuristics, collect findings.
     var reg: RegionRec;
     var addr = 0 as u64;
     var count = 0;
+    var findings: Finding[100];
+    var findingCount = 0;
 
     while (true) {
         var rc = jkf_region_at(handle, addr, &reg as rawptr, 48 as u64);
@@ -197,11 +245,35 @@ func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
 
             printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type, class);
             count = count + 1;
+
+            // Apply heuristics.
+            var finding = heuristic_rwx(&reg);
+            if (finding != null) {
+                if (findingCount < 100) {
+                    var f = &findings[findingCount];
+                    *f = *finding;
+                    findingCount = findingCount + 1;
+                }
+            }
         }
 
         addr = reg.base + reg.size;
         if (count > 500000) { break; }
     }
+
+    // Report findings.
+    if (findingCount > 0) {
+        var fhdr = "\nFindings:\n";
+        printf(&fhdr[0], 0);
+        var i = 0;
+        var ffmt = "  %016llx %12llu %s (severity %d)\n";
+        while (i < findingCount) {
+            var f = &findings[i];
+            printf(&ffmt[0], (*f).base, (*f).size, (*f).reason, (*f).severity);
+            i = i + 1;
+        }
+    }
+
     return count;
 }
 
