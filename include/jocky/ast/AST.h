@@ -49,6 +49,8 @@ enum class NodeKind {
     IfStmt,
     WhileStmt,
     ReturnStmt,
+    BreakStmt,
+    ContinueStmt,
     Block,
     // Type syntax.
     TypeExpr,
@@ -338,6 +340,14 @@ struct ReturnStmt : Stmt {
     Expr *value;  // null means `return;`, which behaves like `return 0;`
     ReturnStmt(SourceLocation l, Expr *v)
         : Stmt(NodeKind::ReturnStmt, l), value(v) {}
+};
+
+struct BreakStmt : Stmt {
+    explicit BreakStmt(SourceLocation l) : Stmt(NodeKind::BreakStmt, l) {}
+};
+
+struct ContinueStmt : Stmt {
+    explicit ContinueStmt(SourceLocation l) : Stmt(NodeKind::ContinueStmt, l) {}
 };
 
 // Top Level

@@ -1,0 +1,15 @@
+// REQUIRES: e2e
+// RUN: %jocky build "%S/../../forensic/mem/jocky-mem.jk" -o "%t.exe" -L %jockyrt_libdir -l jockyrt
+// RUN: "%t.exe" selftest | %FileCheck "%s"
+// RUN: %not "%t.exe" inventory 999999 | %FileCheck --check-prefix=BADPID "%s"
+//
+// Builds the real forensic tool (forensic/mem/jocky-mem.jk) and exercises two
+// paths: `selftest` inventories this very process (proving open + region walk +
+// module classification work), and a bogus pid must fail cleanly rather than
+// hang - a regression guard for the FFI signedness bug where `jkf_open`'s C
+// `int` -5 was read as a 64-bit value with garbage in the high word, so
+// `h < 0` came out false and the region loop spun forever.
+//
+// CHECK: SELFTEST OK
+//
+// BADPID: cannot open pid 999999 (error -5)

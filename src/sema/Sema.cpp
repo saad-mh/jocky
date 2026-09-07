@@ -453,6 +453,7 @@ private:
     // pass 2: bodies
     void checkFunctionBody(ast::FunctionDecl &fn) {
         locals_.clear();
+        loopDepth_ = 0;
         for (const ast::Param &p : fn.params) locals_[p.name] = p.type;
         currentReturn_ = fn.resolvedReturn;
         if (fn.body) checkBlock(*fn.body);
@@ -460,6 +461,7 @@ private:
 
     void checkImplicitMain() {
         locals_.clear();
+        loopDepth_ = 0;
         currentReturn_ = Type::intTy();
         for (ast::Stmt *s : module_.topLevelStatements) checkStmt(*s);
     }
@@ -487,9 +489,17 @@ private:
         case ast::NodeKind::WhileStmt: {
             auto &w = static_cast<ast::WhileStmt &>(stmt);
             checkCondition(*w.condition);
+            ++loopDepth_;
             checkBlock(*w.body);
+            --loopDepth_;
             return;
         }
+        case ast::NodeKind::BreakStmt:
+            if (loopDepth_ == 0) err(stmt.loc, "'break' outside a loop");
+            return;
+        case ast::NodeKind::ContinueStmt:
+            if (loopDepth_ == 0) err(stmt.loc, "'continue' outside a loop");
+            return;
         case ast::NodeKind::ReturnStmt:
             return checkReturn(static_cast<ast::ReturnStmt &>(stmt));
         case ast::NodeKind::Block:
@@ -1075,6 +1085,7 @@ private:
     llvm::StringMap<FnSig> functions_;
     llvm::StringMap<Type> locals_;  // reset per function
     Type currentReturn_;
+    int loopDepth_ = 0;  // reset per function; > 0 inside a while body
 
     // Struct declarations, resolved once up front. `structState_`: 0 pending,
     // 1 being laid out (a cycle if we see it again), 2 done.

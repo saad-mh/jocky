@@ -30,6 +30,12 @@ A `jkf_*` function returns an `int32`:
 | `>= 0` | success - a count, a length in bytes, or a handle-ish token   |
 | `< 0`  | `-(error)`, one of the `JKF_E_*` codes                        |
 
+It is a C `int` (32-bit). A JOCKY caller must declare these functions
+`-> i32`, **not** `-> int` (which is 64-bit): the x64 ABI only defines the low
+32 bits of the return register for an `int`, so reading 64 bits sees garbage in
+the high word and an error like `-5` tests as `>= 0`. Widen to `int` explicitly
+(`jkf_open(...) as int`) once across the boundary.
+
 `JKF_E_*`:
 
 | name              | value | meaning                                          |

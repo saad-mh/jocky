@@ -13,6 +13,7 @@ add_library(jockyrt STATIC
     src/process.c
     src/target.c
     src/threads.c
+    src/tool.c
 )
 
 target_include_directories(jockyrt

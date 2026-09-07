@@ -334,6 +334,17 @@ ast::Stmt *Parser::parseStatement() {
     case TokenKind::KwIf: return parseIf();
     case TokenKind::KwWhile: return parseWhile();
     case TokenKind::KwReturn: return parseReturn();
+    case TokenKind::KwBreak:
+    case TokenKind::KwContinue: {
+        const bool isBreak = check(TokenKind::KwBreak);
+        const SourceLocation loc = current().location;
+        advance();
+        if (!expect(TokenKind::Semicolon,
+                    isBreak ? "';' after 'break'" : "';' after 'continue'"))
+            return nullptr;
+        if (isBreak) return make<ast::BreakStmt>(loc);
+        return make<ast::ContinueStmt>(loc);
+    }
     case TokenKind::LBrace: return parseBlock();
     default: return parseAssignOrExprStatement();
     }
