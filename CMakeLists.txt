@@ -55,6 +55,9 @@ enable_testing()
 add_subdirectory(src)
 add_subdirectory(test)
 
+# The forensic runtime shim (Part 2). Independent of LLVM and of src/.
+add_subdirectory(runtime/jockyrt)
+
 # --- Configure summary --------------------------------------------------
 
 message(STATUS "")
