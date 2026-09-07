@@ -28,6 +28,9 @@ extern "C" jkf_process_name(pid: u32, buf: rawptr, cap: u64) -> i32;
 extern "C" jkf_open(pid: u32, want_write: bool, accessOut: rawptr, cap: u64) -> i32;
 extern "C" jkf_close(handle: i32) -> i32;
 extern "C" jkf_region_at(handle: i32, addr: u64, out: rawptr, cap: u64) -> i32;
+extern "C" jkf_module_count(handle: i32) -> i32;
+extern "C" jkf_modules(handle: i32, out: rawptr, cap: u64, names: rawptr, namesCap: u64) -> i32;
+extern "C" jkf_mapped_name(handle: i32, addr: u64, names: rawptr, namesCap: u64) -> i32;
 
 // jockyrt records, overlaid on the buffers jockyrt fills (see abi.md).
 
@@ -48,6 +51,16 @@ struct RegionRec {
     base: u64,
     size: u64,
     allocBase: u64,
+}
+
+struct ModuleRec {
+    version: u32,
+    nameOff: u32,
+    pathOff: u32,
+    flags: u32,
+    base: u64,
+    size: u64,
+    entryPoint: u64,
 }
 
 // ---- Win32 memory constants (JOCKY has no `const`, so: functions) ------
@@ -106,13 +119,52 @@ func resolve_target(arg: ptr<char>) -> int {
     return jkf_pid_by_name(arg);
 }
 
-// ---- inventory (F.4, minimal for now) ---------------------------------
+// Classification of a region (simplified F.4 for now).
+func classify_region(reg: ptr<RegionRec>, modBase: u64, modSize: u64) -> ptr<char> {
+    var base = (*reg).base;
+    var size = (*reg).size;
+    var regType = (*reg).type;
+    var prot = (*reg).protect;
 
-func inventory(handle: i32) -> int {
-    var hdr = "        BASE               SIZE  STATE     TYPE      PROT  XW\n";
+    // If it overlaps a module range, it's image or image-exec.
+    if (base >= modBase) {
+        if (base < (modBase + modSize)) {
+            if (is_exec(prot)) { return &"image-exec"[0]; }
+            return &"image"[0];
+        }
+    }
+    if ((base + size) > modBase) {
+        if ((base + size) <= (modBase + modSize)) {
+            if (is_exec(prot)) { return &"image-exec"[0]; }
+            return &"image"[0];
+        }
+    }
+
+    // Check type for mapped vs private.
+    if (regType == MEM_MAPPED()) {
+        if (is_exec(prot)) { return &"mapped-exec"[0]; }
+        return &"mapped-data"[0];
+    }
+
+    // Otherwise private.
+    if (is_exec(prot)) { return &"private-exec"[0]; }
+    return &"private-data"[0];
+}
+
+// ---- inventory (F.4) ---------------------------------
+
+func inventory(handle: i32, modBuf: rawptr, modCap: u64) -> int {
+    var hdr = "        BASE               SIZE  STATE     TYPE      CLASS\n";
     printf(&hdr[0], 0);
 
-    var rowfmt = "  %016llx  %12llu  %08x  %08x  %04x  %c%c\n";
+    var rowfmt = "  %016llx  %12llu  %08x  %08x  %s\n";
+
+    // Load modules.
+    var modNames: char[65536];
+    var modCount = jkf_modules(handle, modBuf, modCap, &modNames[0] as rawptr, 65536u64);
+    if (modCount < 0) { modCount = 0; }
+
+    // Walk regions.
     var reg: RegionRec;
     var addr = 0 as u64;
     var count = 0;
@@ -122,12 +174,28 @@ func inventory(handle: i32) -> int {
         if (rc <= 0) { break; }
 
         if (reg.state == MEM_COMMIT()) {
-            var xc = 45;                              // '-'
-            if (is_exec(reg.protect)) { xc = 88; }    // 'X'
-            var wc = 45;
-            if (is_writable(reg.protect)) { wc = 87; } // 'W'
-            printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type,
-                   reg.protect, xc, wc);
+            var class = &"unknown"[0];
+
+            // Find if this region is in any module.
+            var i = 0;
+            var minModBase = 0 as u64;
+            var minModSize = 0 as u64;
+            while (i < modCount) {
+                var mods = modBuf as ptr<ModuleRec>;
+                var m = mods + i;
+                if ((*m).base <= addr) {
+                    if (addr < ((*m).base + (*m).size)) {
+                        minModBase = (*m).base;
+                        minModSize = (*m).size;
+                        break;
+                    }
+                }
+                i = i + 1;
+            }
+
+            class = classify_region(&reg, minModBase, minModSize);
+
+            printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type, class);
             count = count + 1;
         }
 
@@ -159,7 +227,8 @@ func run_inventory(pid: u32) -> int {
     var banner = "jocky-mem inventory  pid=%u  name=%s  access-level=%u\n";
     printf(&banner[0], pid, &nm[0], acc.level);
 
-    var n = inventory(h);
+    var modBuf: ModuleRec[256];
+    var n = inventory(h, &modBuf[0] as rawptr, 256u64 * 40u64);
     var tail = "\n%d committed regions\n";
     printf(&tail[0], n);
 
