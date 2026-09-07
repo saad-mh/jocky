@@ -12,5 +12,6 @@ config.jocky_build_tools_dir  = r"@JOCKY_LLVM_BUILD_TOOLS_DIR@"
 config.have_linker            = @JOCKY_HAVE_LINKER@
 config.test_source_root       = r"@CMAKE_CURRENT_SOURCE_DIR@"
 config.test_exec_root         = r"@JOCKY_TEST_EXEC_ROOT@"
+config.jockyrt_lib_dir        = r"@JOCKYRT_LIB_DIR@"
 
 lit_config.load_config(config, r"@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")

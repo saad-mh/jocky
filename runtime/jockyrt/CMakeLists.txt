@@ -24,6 +24,15 @@ set_target_properties(jockyrt PROPERTIES
     C_STANDARD_REQUIRED ON
 )
 
+# The forensic module is compiled by `jocky` and linked with `clang`, which
+# defaults to the static CRT (`-defaultlib:libcmt`). jockyrt has to match or
+# lld-link hits a libcmt/msvcrt conflict and drops the CRT. cl honours the last
+# `/M` flag, so appending this is enough regardless of the inherited default.
+if(MSVC)
+    target_compile_options(jockyrt PRIVATE
+        $<IF:$<CONFIG:Debug>,/MTd,/MT>)
+endif()
+
 if(WIN32)
     # advapi32: token / privilege calls.
     # psapi:    EnumProcessModulesEx / GetModuleFileNameEx / GetMappedFileName.
