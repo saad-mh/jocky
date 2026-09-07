@@ -8,8 +8,8 @@
 // parse the same bytes).
 
 extern "C" jkf_abi_version() -> u32;
-extern "C" jkf_process_count() -> int;
-extern "C" jkf_processes(out: rawptr, cap: u64) -> int;
+extern "C" jkf_process_count() -> i32;   // C `int`; widen explicitly below
+extern "C" jkf_processes(out: rawptr, cap: u64) -> i32;
 extern "C" GetCurrentProcessId() -> u32;
 
 struct JkfProcessRecord {
@@ -22,11 +22,11 @@ struct JkfProcessRecord {
 
 print(jkf_abi_version());              // 1
 
-var n = jkf_process_count();
+var n = jkf_process_count() as int;
 print(n > 0);                          // true
 
 var buf: char[65536];
-var got = jkf_processes(&buf[0] as rawptr, 65536u64);
+var got = jkf_processes(&buf[0] as rawptr, 65536u64) as int;
 print(got == n);                       // true
 
 var recs = &buf[0] as ptr<JkfProcessRecord>;

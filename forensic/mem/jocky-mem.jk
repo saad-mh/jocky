@@ -8,6 +8,10 @@
 //   jocky-mem selftest                 (inventories this process; for CI)
 //
 // `scan`, `dump`, and `scan-dump` land in later increments.
+//
+// Note on FFI: JOCKY's `int` is 64-bit, but C's `int` is 32-bit. Every extern
+// that maps to a C `int` is declared `i32` so the ABI (and the sign of the
+// returned value) is right; the tool's own helpers use native `int`.
 
 // ---- C runtime / Win32 --------------------------------------------------
 
@@ -16,14 +20,14 @@ extern "C" strcmp(a: ptr<char>, b: ptr<char>) -> i32;
 extern "C" strtoul(s: ptr<char>, end: ptr<ptr<char>>, base: i32) -> u32;
 extern "C" GetCurrentProcessId() -> u32;
 
-// ---- jockyrt ----------------------------------------------------------
+// ---- jockyrt (every one returns C int) -------------------------------
 
-extern "C" jkf_args(buf: rawptr, cap: u64) -> int;
-extern "C" jkf_pid_by_name(name: ptr<char>) -> int;
-extern "C" jkf_process_name(pid: u32, buf: rawptr, cap: u64) -> int;
-extern "C" jkf_open(pid: u32, want_write: bool, accessOut: rawptr, cap: u64) -> int;
-extern "C" jkf_close(handle: int) -> int;
-extern "C" jkf_region_at(handle: int, addr: u64, out: rawptr, cap: u64) -> int;
+extern "C" jkf_args(buf: rawptr, cap: u64) -> i32;
+extern "C" jkf_pid_by_name(name: ptr<char>) -> i32;
+extern "C" jkf_process_name(pid: u32, buf: rawptr, cap: u64) -> i32;
+extern "C" jkf_open(pid: u32, want_write: bool, accessOut: rawptr, cap: u64) -> i32;
+extern "C" jkf_close(handle: i32) -> i32;
+extern "C" jkf_region_at(handle: i32, addr: u64, out: rawptr, cap: u64) -> i32;
 
 // jockyrt records, overlaid on the buffers jockyrt fills (see abi.md).
 
@@ -49,26 +53,17 @@ struct RegionRec {
 // ---- Win32 memory constants (JOCKY has no `const`, so: functions) ------
 
 func MEM_COMMIT() -> u32  { return 0x1000u32; }
-func MEM_RESERVE() -> u32 { return 0x2000u32; }
-func MEM_FREE() -> u32    { return 0x10000u32; }
 func MEM_IMAGE() -> u32   { return 0x1000000u32; }
 func MEM_MAPPED() -> u32  { return 0x40000u32; }
 func MEM_PRIVATE() -> u32 { return 0x20000u32; }
 
-func PAGE_NOACCESS() -> u32          { return 0x01u32; }
-func PAGE_EXECUTE() -> u32           { return 0x10u32; }
-func PAGE_EXECUTE_READ() -> u32      { return 0x20u32; }
-func PAGE_EXECUTE_READWRITE() -> u32 { return 0x40u32; }
-func PAGE_EXECUTE_WRITECOPY() -> u32 { return 0x80u32; }
-func PAGE_GUARD() -> u32             { return 0x100u32; }
-
-// True if `protect` (masked of PAGE_GUARD etc.) allows execution.
+// True if `protect`'s access bits (low byte) allow execution.
 func is_exec(protect: u32) -> bool {
-    var p = protect & 0xFFu32;   // low byte holds the access bits
-    if (p == PAGE_EXECUTE()) { return true; }
-    if (p == PAGE_EXECUTE_READ()) { return true; }
-    if (p == PAGE_EXECUTE_READWRITE()) { return true; }
-    if (p == PAGE_EXECUTE_WRITECOPY()) { return true; }
+    var p = protect & 0xFFu32;
+    if (p == 0x10u32) { return true; }  // PAGE_EXECUTE
+    if (p == 0x20u32) { return true; }  // PAGE_EXECUTE_READ
+    if (p == 0x40u32) { return true; }  // PAGE_EXECUTE_READWRITE
+    if (p == 0x80u32) { return true; }  // PAGE_EXECUTE_WRITECOPY
     return false;
 }
 
@@ -76,30 +71,26 @@ func is_writable(protect: u32) -> bool {
     var p = protect & 0xFFu32;
     if (p == 0x04u32) { return true; }  // PAGE_READWRITE
     if (p == 0x08u32) { return true; }  // PAGE_WRITECOPY
-    if (p == PAGE_EXECUTE_READWRITE()) { return true; }
-    if (p == PAGE_EXECUTE_WRITECOPY()) { return true; }
+    if (p == 0x40u32) { return true; }  // PAGE_EXECUTE_READWRITE
+    if (p == 0x80u32) { return true; }  // PAGE_EXECUTE_WRITECOPY
     return false;
 }
 
 // ---- a tiny argv over jkf_args' NUL-separated blob --------------------
 
-// Fills `slots` with pointers to each argument inside `blob`. Returns argc.
-func split_args(blob: ptr<char>, argc: int, slots: ptr<ptr<char>>) -> int {
+// Fills `slots[0..argc)` with pointers to each argument inside `blob`.
+func split_args(blob: ptr<char>, argc: int, slots: ptr<ptr<char>>) {
     var off = 0;
     var i = 0;
     while (i < argc) {
-        var p = blob + off;
-        slots + i;                       // (index target computed below)
         var cur = slots + i;
-        *cur = p;
-        // walk to the NUL that ends this argument
+        *cur = blob + off;
         while (*(blob + off) != (0 as char)) {
             off = off + 1;
         }
         off = off + 1;
         i = i + 1;
     }
-    return argc;
 }
 
 // ---- target resolution --------------------------------------------
@@ -107,8 +98,8 @@ func split_args(blob: ptr<char>, argc: int, slots: ptr<ptr<char>>) -> int {
 // `arg` is a decimal pid or an image name. Returns a pid, or < 0.
 func resolve_target(arg: ptr<char>) -> int {
     var c0 = *arg;
-    if (c0 >= (48 as char)) {            // '0'
-        if (c0 <= (57 as char)) {        // '9'
+    if (c0 >= (48 as char)) {
+        if (c0 <= (57 as char)) {
             return strtoul(arg, null, 10) as int;
         }
     }
@@ -117,11 +108,11 @@ func resolve_target(arg: ptr<char>) -> int {
 
 // ---- inventory (F.4, minimal for now) ---------------------------------
 
-func inventory(handle: int) -> int {
-    var hdr = "        BASE               SIZE  STATE  TYPE      PROT  XW\n";
+func inventory(handle: i32) -> int {
+    var hdr = "        BASE               SIZE  STATE     TYPE      PROT  XW\n";
     printf(&hdr[0], 0);
 
-    var rowfmt = "  %016llx  %12llu  %5x  %08x  %04x  %c%c\n";
+    var rowfmt = "  %016llx  %12llu  %08x  %08x  %04x  %c%c\n";
     var reg: RegionRec;
     var addr = 0 as u64;
     var count = 0;
@@ -131,10 +122,10 @@ func inventory(handle: int) -> int {
         if (rc <= 0) { break; }
 
         if (reg.state == MEM_COMMIT()) {
-            var xc = 45 as i32;          // '-'
-            if (is_exec(reg.protect)) { xc = 88 as i32; }   // 'X'
-            var wc = 45 as i32;
-            if (is_writable(reg.protect)) { wc = 87 as i32; }  // 'W'
+            var xc = 45;                              // '-'
+            if (is_exec(reg.protect)) { xc = 88; }    // 'X'
+            var wc = 45;
+            if (is_writable(reg.protect)) { wc = 87; } // 'W'
             printf(&rowfmt[0], reg.base, reg.size, reg.state, reg.type,
                    reg.protect, xc, wc);
             count = count + 1;
@@ -146,7 +137,7 @@ func inventory(handle: int) -> int {
     return count;
 }
 
-// ---- open + dispatch --------------------------------------------------
+// ---- dispatch ----------------------------------------------------
 
 func usage() -> int {
     var u = "usage: jocky-mem <inventory|selftest> <pid|name>\n";
@@ -197,7 +188,9 @@ func run_selftest() -> int {
     jkf_close(h);
 
     var ok = 0;
-    if (regions > 10) { if (images > 0) { ok = 1; } }
+    if (regions > 10) {
+        if (images > 0) { ok = 1; }
+    }
     if (ok == 1) {
         var m = "SELFTEST OK  (%d committed regions, %d image regions)\n";
         printf(&m[0], regions, images);
@@ -219,7 +212,6 @@ if (argc < 2) {
 }
 
 split_args(&blob[0], argc, &slots[0]);
-
 var cmd = slots[1];
 
 if (strcmp(cmd, &"selftest"[0]) == 0) {
