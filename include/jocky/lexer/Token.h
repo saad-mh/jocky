@@ -26,19 +26,20 @@ enum class TokenKind {
     // is recognized as a builtin later. Type names (`int`, `char`, `u32`, ...)
     // are likewise ordinary identifiers, resolved in type position by sema.
     KwFunc,
-    KwVar,
-    KwIf,
-    KwElse,
+    KwLet,
+    KwCheck,
+    KwElse,        // only ever as `else check`; a lone trailing block is `otherwise`
+    KwOtherwise,
     KwWhile,
     KwReturn,
-    KwBreak,
-    KwContinue,
+    KwStop,
+    KwSkip,
     KwStruct,
     KwExtern,
-    KwAs,     // the `expr as Type` cast operator
-    KwTrue,
-    KwFalse,
-    KwNull,       // the null-pointer literal
+    KwTo,     // the `expr to Type` cast operator
+    KwYes,
+    KwNo,
+    KwNone,       // the null-pointer literal
     KwSizeof,     // sizeof(T) / sizeof(expr)
     KwOffsetof,   // offsetof(Struct, field)
 

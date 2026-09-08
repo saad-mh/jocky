@@ -12,6 +12,7 @@
 #include "jocky/ast/AST.h"
 #include "jocky/ast/ASTPrinter.h"
 #include "jocky/codegen/CodeGen.h"
+#include "jocky/codegen/JITRunner.h"
 #include "jocky/codegen/ObjectEmitter.h"
 #include "jocky/codegen/PassPipeline.h"
 #include "jocky/driver/Linker.h"
@@ -192,10 +193,10 @@ int runBuild(const Options &options) {
         return 1;
     }
 
-    llvm::LLVMContext context;
+    auto ctx = std::make_unique<llvm::LLVMContext>();
     const llvm::StringRef moduleName =
         llvm::sys::path::filename(options.inputPath);
-    codegen::CodeGen codegen(context, moduleName, diags);
+    codegen::CodeGen codegen(*ctx, moduleName, diags);
     std::unique_ptr<llvm::Module> module = codegen.lowerModule(*ast);
     if (diags.hasErrors()) {
         diags.printAll(llvm::errs());
@@ -210,6 +211,29 @@ int runBuild(const Options &options) {
                          << os.str();
             return 70;
         }
+    }
+
+    // --run: JIT-compile and execute without touching disk.
+    if (options.runInMemory) {
+        const codegen::OptLevel runOpt =
+            options.optimize ? codegen::OptLevel::O1 : codegen::OptLevel::O0;
+        codegen::ObfuscationOptions runObf;
+        runObf.enabled = options.obfuscate;
+        runObf.passes = options.obfuscatePasses;
+        runObf.seed = options.obfSeed;
+        runObf.verbose = options.verbose;
+
+        // initializeNativeTarget + createHostTargetMachine sets the module's
+        // triple and data layout, which LLJIT requires before taking ownership.
+        codegen::initializeNativeTarget();
+        std::unique_ptr<llvm::TargetMachine> runMachine =
+            codegen::createHostTargetMachine(*module, runOpt, diags);
+        if (!runMachine) {
+            diags.printAll(llvm::errs());
+            return 70;
+        }
+        codegen::runTransformPipeline(*module, runMachine.get(), runOpt, runObf);
+        return codegen::runInMemory(std::move(module), std::move(ctx), options);
     }
 
     const codegen::OptLevel opt =

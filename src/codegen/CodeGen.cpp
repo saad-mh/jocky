@@ -323,13 +323,13 @@ void CodeGen::lowerStmt(const ast::Stmt &stmt) {
     }
     case ast::NodeKind::BreakStmt:
         if (loops_.empty())
-            error(stmt.loc, "internal: 'break' outside a loop in codegen");
+            error(stmt.loc, "internal: 'stop' outside a loop in codegen");
         else
             builder_.CreateBr(loops_.back().breakTarget);
         return;
     case ast::NodeKind::ContinueStmt:
         if (loops_.empty())
-            error(stmt.loc, "internal: 'continue' outside a loop in codegen");
+            error(stmt.loc, "internal: 'skip' outside a loop in codegen");
         else
             builder_.CreateBr(loops_.back().continueTarget);
         return;

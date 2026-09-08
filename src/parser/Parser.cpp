@@ -66,8 +66,8 @@ void Parser::synchronize() {
         // We are sitting on something that can start a fresh construct.
         switch (current().kind) {
         case TokenKind::KwFunc:
-        case TokenKind::KwVar:
-        case TokenKind::KwIf:
+        case TokenKind::KwLet:
+        case TokenKind::KwCheck:
         case TokenKind::KwWhile:
         case TokenKind::KwReturn:
         case TokenKind::RBrace:
@@ -330,17 +330,17 @@ ast::Block *Parser::parseBlock() {
 
 ast::Stmt *Parser::parseStatement() {
     switch (current().kind) {
-    case TokenKind::KwVar: return parseVarDecl();
-    case TokenKind::KwIf: return parseIf();
+    case TokenKind::KwLet: return parseVarDecl();
+    case TokenKind::KwCheck: return parseIf();
     case TokenKind::KwWhile: return parseWhile();
     case TokenKind::KwReturn: return parseReturn();
-    case TokenKind::KwBreak:
-    case TokenKind::KwContinue: {
-        const bool isBreak = check(TokenKind::KwBreak);
+    case TokenKind::KwStop:
+    case TokenKind::KwSkip: {
+        const bool isBreak = check(TokenKind::KwStop);
         const SourceLocation loc = current().location;
         advance();
         if (!expect(TokenKind::Semicolon,
-                    isBreak ? "';' after 'break'" : "';' after 'continue'"))
+                    isBreak ? "';' after 'stop'" : "';' after 'skip'"))
             return nullptr;
         if (isBreak) return make<ast::BreakStmt>(loc);
         return make<ast::ContinueStmt>(loc);
@@ -352,10 +352,10 @@ ast::Stmt *Parser::parseStatement() {
 
 ast::Stmt *Parser::parseVarDecl() {
     const SourceLocation loc = current().location;
-    advance();  // 'var'
+    advance();  // 'let'
 
     if (!check(TokenKind::Identifier)) {
-        diags_.error(current().location, "expected a variable name after 'var'");
+        diags_.error(current().location, "expected a variable name after 'let'");
         return nullptr;
     }
     std::string name = current().spelling.str();
@@ -415,9 +415,9 @@ ast::Stmt *Parser::parseAssignOrExprStatement() {
 
 ast::Stmt *Parser::parseIf() {
     const SourceLocation loc = current().location;
-    advance();  // 'if'
+    advance();  // 'check'
 
-    if (!expect(TokenKind::LParen, "'(' after 'if'")) return nullptr;
+    if (!expect(TokenKind::LParen, "'(' after 'check'")) return nullptr;
     ast::Expr *cond = parseExpr();
     if (!cond) return nullptr;
     if (!expect(TokenKind::RParen, "')' after the condition")) return nullptr;
@@ -425,20 +425,25 @@ ast::Stmt *Parser::parseIf() {
     ast::Block *thenBlk = parseBlock();
     if (!thenBlk) return nullptr;
 
+    // A chain reads `check (..) {..} else check (..) {..} otherwise {..}`:
+    // `else check` continues it, a lone `otherwise` is the final block.
     ast::Block *elseBlk = nullptr;
     if (match(TokenKind::KwElse)) {
-        if (check(TokenKind::KwIf)) {
-            // Store `else if ...` as a block containing the nested if.
-            const SourceLocation elseLoc = current().location;
-            ast::Stmt *nested = parseIf();
-            if (!nested) return nullptr;
-            auto *wrap = make<ast::Block>(elseLoc);
-            wrap->statements.push_back(nested);
-            elseBlk = wrap;
-        } else {
-            elseBlk = parseBlock();
-            if (!elseBlk) return nullptr;
+        const SourceLocation elseLoc = current().location;
+        if (!check(TokenKind::KwCheck)) {
+            diags_.error(current().location,
+                         "expected 'check' after 'else' (a trailing block "
+                         "without a condition is 'otherwise')");
+            return nullptr;
         }
+        ast::Stmt *nested = parseIf();
+        if (!nested) return nullptr;
+        auto *wrap = make<ast::Block>(elseLoc);
+        wrap->statements.push_back(nested);
+        elseBlk = wrap;
+    } else if (match(TokenKind::KwOtherwise)) {
+        elseBlk = parseBlock();
+        if (!elseBlk) return nullptr;
     }
 
     return make<ast::IfStmt>(loc, cond, thenBlk, elseBlk);
@@ -635,15 +640,15 @@ ast::Expr *Parser::parseMultiplicative() {
     }
 }
 
-// `unary ('as' type)*` - a cast binds tighter than the arithmetic operators and
-// looser than a prefix `-`, so `-x as int` is `(-x) as int` and `a * b as int`
-// is `a * (b as int)`.
+// `unary ('to' type)*` - a cast binds tighter than the arithmetic operators and
+// looser than a prefix `-`, so `-x to int` is `(-x) to int` and `a * b to int`
+// is `a * (b to int)`.
 ast::Expr *Parser::parseCast() {
     ast::Expr *e = parseUnary();
     if (!e) return nullptr;
-    while (check(TokenKind::KwAs)) {
+    while (check(TokenKind::KwTo)) {
         const SourceLocation loc = current().location;
-        advance();  // 'as'
+        advance();  // 'to'
         ast::TypeExpr *target = parseType();
         if (!target) return nullptr;
         e = make<ast::CastExpr>(loc, e, target);
@@ -762,15 +767,15 @@ ast::Expr *Parser::parsePrimary() {
         return make<ast::CharLiteralExpr>(
             tok.location, static_cast<std::uint8_t>(tok.intValue));
 
-    case TokenKind::KwTrue:
+    case TokenKind::KwYes:
         advance();
         return make<ast::BoolLiteralExpr>(tok.location, true);
 
-    case TokenKind::KwFalse:
+    case TokenKind::KwNo:
         advance();
         return make<ast::BoolLiteralExpr>(tok.location, false);
 
-    case TokenKind::KwNull:
+    case TokenKind::KwNone:
         advance();
         return make<ast::NullLiteralExpr>(tok.location);
 

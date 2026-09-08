@@ -35,19 +35,20 @@ llvm::StringRef tokenKindName(TokenKind kind) {
     case TokenKind::StringLiteral: return "StringLiteral";
     case TokenKind::Identifier: return "Identifier";
     case TokenKind::KwFunc: return "KwFunc";
-    case TokenKind::KwVar: return "KwVar";
-    case TokenKind::KwIf: return "KwIf";
+    case TokenKind::KwLet: return "KwLet";
+    case TokenKind::KwCheck: return "KwCheck";
     case TokenKind::KwElse: return "KwElse";
+    case TokenKind::KwOtherwise: return "KwOtherwise";
     case TokenKind::KwWhile: return "KwWhile";
     case TokenKind::KwReturn: return "KwReturn";
-    case TokenKind::KwBreak: return "KwBreak";
-    case TokenKind::KwContinue: return "KwContinue";
+    case TokenKind::KwStop: return "KwStop";
+    case TokenKind::KwSkip: return "KwSkip";
     case TokenKind::KwStruct: return "KwStruct";
     case TokenKind::KwExtern: return "KwExtern";
-    case TokenKind::KwAs: return "KwAs";
-    case TokenKind::KwTrue: return "KwTrue";
-    case TokenKind::KwFalse: return "KwFalse";
-    case TokenKind::KwNull: return "KwNull";
+    case TokenKind::KwTo: return "KwTo";
+    case TokenKind::KwYes: return "KwYes";
+    case TokenKind::KwNo: return "KwNo";
+    case TokenKind::KwNone: return "KwNone";
     case TokenKind::KwSizeof: return "KwSizeof";
     case TokenKind::KwOffsetof: return "KwOffsetof";
     case TokenKind::LParen: return "LParen";
@@ -481,19 +482,20 @@ Token Lexer::lexIdentifierOrKeyword() {
     Token t = finish(TokenKind::Identifier, start, loc);
     t.kind = llvm::StringSwitch<TokenKind>(t.spelling)
                  .Case("func", TokenKind::KwFunc)
-                 .Case("var", TokenKind::KwVar)
-                 .Case("if", TokenKind::KwIf)
+                 .Case("let", TokenKind::KwLet)
+                 .Case("check", TokenKind::KwCheck)
                  .Case("else", TokenKind::KwElse)
+                 .Case("otherwise", TokenKind::KwOtherwise)
                  .Case("while", TokenKind::KwWhile)
                  .Case("return", TokenKind::KwReturn)
-                 .Case("break", TokenKind::KwBreak)
-                 .Case("continue", TokenKind::KwContinue)
+                 .Case("stop", TokenKind::KwStop)
+                 .Case("skip", TokenKind::KwSkip)
                  .Case("struct", TokenKind::KwStruct)
                  .Case("extern", TokenKind::KwExtern)
-                 .Case("as", TokenKind::KwAs)
-                 .Case("true", TokenKind::KwTrue)
-                 .Case("false", TokenKind::KwFalse)
-                 .Case("null", TokenKind::KwNull)
+                 .Case("to", TokenKind::KwTo)
+                 .Case("yes", TokenKind::KwYes)
+                 .Case("no", TokenKind::KwNo)
+                 .Case("none", TokenKind::KwNone)
                  .Case("sizeof", TokenKind::KwSizeof)
                  .Case("offsetof", TokenKind::KwOffsetof)
                  .Default(TokenKind::Identifier);

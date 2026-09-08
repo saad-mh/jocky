@@ -1,8 +1,8 @@
-// while loops, assignment, and if/else.
+// while loops, assignment, and check/otherwise.
 
 // Sum 1..10.
-var i = 1;
-var total = 0;
+let i = 1;
+let total = 0;
 while (i <= 10) {
     total = total + i;
     i = i + 1;
@@ -10,11 +10,11 @@ while (i <= 10) {
 print(total);
 
 // Count down, printing whether each number is even or odd (0 = even, 1 = odd).
-var n = 5;
+let n = 5;
 while (n > 0) {
-    if (n % 2 == 0) {
+    check (n % 2 == 0) {
         print(0);
-    } else {
+    } otherwise {
         print(1);
     }
     n = n - 1;

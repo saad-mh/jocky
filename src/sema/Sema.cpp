@@ -9,11 +9,11 @@
 // The scope model is JOCKY's from v0: no nested scopes. A `var` is visible for
 // the rest of its function once its initializer has been checked.
 //
-// Types (the L0 milestone): `int` (i64), `char` (u8), `bool`, `double`,
+// Types (the L0 milestone): `int` (i64), `char` (u8), `flag`, `double`,
 // `float`, and the sized aliases `i8..i64` / `u8..u64`. Implicit conversions
 // are widening only (`char -> int`, narrower-int -> wider-int of the same
 // signedness, `int -> double`, `float -> double`); everything else needs an
-// explicit `expr as T`. Where an implicit widening is needed, sema splices an
+// explicit `expr to T`. Where an implicit widening is needed, sema splices an
 // `ast::ImplicitConversionExpr` into the tree so codegen just emits it.
 
 #include "jocky/sema/Sema.h"
@@ -128,7 +128,7 @@ private:
             Type ft = resolveType(f.typeAnnotation, /*completeStructs=*/true);
             if (ft.isVoid()) {
                 err(f.typeAnnotation->loc, "a struct field cannot have type "
-                                           "'void'");
+                                           "'nothing'");
                 ft = Type::error();
             }
             const unsigned fa = ft.isError() ? 1 : ft.alignOf();
@@ -152,7 +152,7 @@ private:
             Type elem = resolveType(te->element);
             if (elem.isError()) return Type::error();
             if (elem.isVoid()) {
-                err(te->loc, "a slice element cannot be 'void'");
+                err(te->loc, "a slice element cannot be 'nothing'");
                 return Type::error();
             }
             return Type::slice(elem);
@@ -163,7 +163,7 @@ private:
             const bool okN = constUint(*te->sizeExpr, n);
             if (elem.isError()) return Type::error();
             if (elem.isVoid()) {
-                err(te->loc, "an array element cannot be 'void'");
+                err(te->loc, "an array element cannot be 'nothing'");
                 return Type::error();
             }
             if (!okN) {
@@ -179,7 +179,7 @@ private:
             Type pointee = resolveType(te->element, /*completeStructs=*/false);
             if (pointee.isError()) return Type::error();
             if (pointee.isVoid()) {
-                err(te->loc, "use 'rawptr', not 'ptr<void>'");
+                err(te->loc, "use 'rawptr', not 'ptr<nothing>'");
                 return Type::error();
             }
             return Type::pointer(pointee);
@@ -187,8 +187,8 @@ private:
         }
 
         const Type t = llvm::StringSwitch<Type>(te->name)
-                           .Case("void", Type::voidTy())
-                           .Case("bool", Type::boolTy())
+                           .Case("nothing", Type::voidTy())
+                           .Case("flag", Type::boolTy())
                            .Case("int", Type::intTy())
                            .Case("char", Type::charTy())
                            .Case("i8", Type::integer(8, true))
@@ -397,7 +397,7 @@ private:
                 p.type = resolveType(p.typeAnnotation);
                 if (p.type.isVoid()) {
                     err(p.typeAnnotation->loc,
-                        "a parameter cannot have type 'void'");
+                        "a parameter cannot have type 'nothing'");
                     p.type = Type::error();
                 }
             }
@@ -427,7 +427,7 @@ private:
                 p.type = resolveType(p.typeAnnotation);
                 if (p.type.isVoid()) {
                     err(p.typeAnnotation->loc,
-                        "an extern parameter cannot have type 'void'");
+                        "an extern parameter cannot have type 'nothing'");
                     p.type = Type::error();
                 }
                 if (p.type.isStruct()) {
@@ -495,10 +495,10 @@ private:
             return;
         }
         case ast::NodeKind::BreakStmt:
-            if (loopDepth_ == 0) err(stmt.loc, "'break' outside a loop");
+            if (loopDepth_ == 0) err(stmt.loc, "'stop' outside a loop");
             return;
         case ast::NodeKind::ContinueStmt:
-            if (loopDepth_ == 0) err(stmt.loc, "'continue' outside a loop");
+            if (loopDepth_ == 0) err(stmt.loc, "'skip' outside a loop");
             return;
         case ast::NodeKind::ReturnStmt:
             return checkReturn(static_cast<ast::ReturnStmt &>(stmt));
@@ -514,7 +514,8 @@ private:
         if (v.typeAnnotation) {
             ann = resolveType(v.typeAnnotation);
             if (ann.isVoid()) {
-                err(v.typeAnnotation->loc, "a variable cannot have type 'void'");
+                err(v.typeAnnotation->loc,
+                    "a variable cannot have type 'nothing'");
                 ann = Type::error();
             }
         }
@@ -538,7 +539,7 @@ private:
                 err(v.init->loc,
                     llvm::Twine("cannot initialize '") + v.name + "' of type " +
                         ann.name() + " from a value of type " + initT.name() +
-                        " (add an explicit `as " + ann.name() + "`)");
+                        " (add an explicit `to " + ann.name() + "`)");
         } else if (initT.isError() || initT.isVoid()) {
             err(v.loc, llvm::Twine("cannot infer type of '") + v.name +
                            "' from its initializer");
@@ -564,7 +565,7 @@ private:
             err(a.value->loc,
                 llvm::Twine("cannot assign a value of type ") + valT.name() +
                     " to a target of type " + targetT.name() +
-                    " (add an explicit `as " + targetT.name() + "`)");
+                    " (add an explicit `to " + targetT.name() + "`)");
     }
 
     // A storable location: a variable, an array/slice element, `*p`, or a struct
@@ -590,7 +591,7 @@ private:
 
         if (currentReturn_.isVoid()) {
             err(r.value->loc,
-                "returning a value from a function declared `-> void`");
+                "returning a value from a function declared `-> nothing`");
             return;
         }
         if (!currentReturn_.isError() && !coerce(r.value, currentReturn_))
@@ -602,7 +603,7 @@ private:
     void checkCondition(ast::Expr &e) {
         const Type t = checkExpr(e);
         if (t.isError() || t.isBool() || t.isInteger()) return;
-        err(e.loc, llvm::Twine("condition must be a bool or an integer, not ") +
+        err(e.loc, llvm::Twine("condition must be a flag or an integer, not ") +
                        t.name());
     }
 
@@ -830,7 +831,7 @@ private:
 
     static bool isBuiltinTypeName(llvm::StringRef n) {
         return llvm::StringSwitch<bool>(n)
-            .Cases("void", "bool", "int", "char", true)
+            .Cases("nothing", "flag", "int", "char", true)
             .Cases("i8", "i16", "i32", "i64", true)
             .Cases("u8", "u16", "u32", "u64", true)
             .Cases("float", "double", "rawptr", true)
@@ -856,7 +857,7 @@ private:
         }
         if (e.measured.isError()) return Type::error();
         if (e.measured.isVoid()) {
-            err(e.loc, "sizeof needs a sized type, not 'void'");
+            err(e.loc, "sizeof needs a sized type, not 'nothing'");
             return Type::error();
         }
         return Type::intTy();  // a compile-time int
@@ -938,7 +939,7 @@ private:
         if (lt != rt) {
             err(b.loc, llvm::Twine("comparing incompatible pointer types ") +
                            lt.name() + " and " + rt.name() +
-                           " (add an explicit `as`)");
+                           " (add an explicit `to`)");
             return Type::error();
         }
         return Type::boolTy();
@@ -993,7 +994,7 @@ private:
         else {
             err(b.loc, llvm::Twine("operands of '") + ast::binaryOpSymbol(b.op) +
                            "' have incompatible types " + lt.name() + " and " +
-                           rt.name() + " (add an explicit `as`)");
+                           rt.name() + " (add an explicit `to`)");
             return Type::error();
         }
 
@@ -1055,7 +1056,7 @@ private:
                 err(c.args[i]->loc,
                     llvm::Twine("argument ") + llvm::Twine(i + 1) + " to '" +
                         c.callee + "' has type " + at.name() + " but " +
-                        pt.name() + " was expected (add an explicit `as " +
+                        pt.name() + " was expected (add an explicit `to " +
                         pt.name() + "`)");
         }
         return sig.ret;
@@ -1067,7 +1068,7 @@ private:
         if (from.isError() || to.isError()) return to;
 
         if (to.isVoid()) {
-            err(c.loc, "cannot cast to 'void'");
+            err(c.loc, "cannot cast to 'nothing'");
             return Type::error();
         }
         // A widening that would have happened implicitly is always fine; so is

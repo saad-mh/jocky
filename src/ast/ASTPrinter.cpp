@@ -132,7 +132,7 @@ private:
         }
         case NodeKind::IfStmt: {
             const auto &i = static_cast<const IfStmt &>(s);
-            line("(if");
+            line("(check");
             indent_ += 1;
             expr(*i.condition);
             block(*i.thenBlock);
@@ -165,10 +165,10 @@ private:
             break;
         }
         case NodeKind::BreakStmt:
-            line("(break)");
+            line("(stop)");
             break;
         case NodeKind::ContinueStmt:
-            line("(continue)");
+            line("(skip)");
             break;
         case NodeKind::Block:
             block(static_cast<const Block &>(s));

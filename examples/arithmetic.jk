@@ -1,13 +1,13 @@
 // Integer variables and the arithmetic operators.
 
-var a = 6;
-var b = 7;
-var sum = a + b;
-var diff = b - a;
-var prod = a * b;
-var quot = 20 / a;
-var rem = 20 % a;
-var mixed = a + b * 2 - (diff * 3);
+let a = 6;
+let b = 7;
+let sum = a + b;
+let diff = b - a;
+let prod = a * b;
+let quot = 20 / a;
+let rem = 20 % a;
+let mixed = a + b * 2 - (diff * 3);
 
 print(sum);
 print(diff);

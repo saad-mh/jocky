@@ -7,9 +7,9 @@ std::string Type::name() const {
     case TypeKind::Error:
         return "<error>";
     case TypeKind::Void:
-        return "void";
+        return "nothing";
     case TypeKind::Bool:
-        return "bool";
+        return "flag";
     case TypeKind::Int:
         // The two headline spellings win; the rest are the sized names.
         if (bits == 64 && isSigned) return "int";

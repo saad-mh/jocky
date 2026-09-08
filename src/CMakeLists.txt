@@ -22,6 +22,7 @@ add_library(jocky_core STATIC
     codegen/PassPipeline.cpp
     codegen/Obfuscation.cpp
     codegen/ObjectEmitter.cpp
+    codegen/JITRunner.cpp
     driver/Driver.cpp
     driver/Linker.cpp
 )
@@ -42,7 +43,7 @@ target_compile_definitions(jocky_core PRIVATE
 # --- The `jocky` command-line tool ------------------------------------
 
 add_executable(jocky driver/main.cpp)
-target_link_libraries(jocky PRIVATE jocky::core jocky_warnings)
+target_link_libraries(jocky PRIVATE jocky::core jocky_warnings jockyrt)
 target_compile_definitions(jocky PRIVATE JOCKY_VERSION="${PROJECT_VERSION}")
 set_target_properties(jocky PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin"

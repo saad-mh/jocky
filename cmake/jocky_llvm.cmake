@@ -71,6 +71,8 @@ llvm_map_components_to_libnames(JOCKY_LLVM_LIBS
     mc
     mcparser
     codegen
+    orcjit
+    jitlink
     AllTargetsCodeGens
     AllTargetsAsmParsers
     AllTargetsDescs
