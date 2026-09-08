@@ -21,3 +21,4 @@ compile_commands.json
 .claude/
 # CTest scratch when run from the source tree
 /Testing/
+jocky-mem.exe

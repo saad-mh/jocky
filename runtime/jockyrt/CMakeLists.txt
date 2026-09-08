@@ -7,6 +7,8 @@
 add_library(jockyrt STATIC
     src/dump.c
     src/error.c
+    src/file.c
+    src/baseline.c
     src/handle.c
     src/modules.c
     src/privilege.c

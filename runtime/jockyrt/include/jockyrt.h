@@ -310,6 +310,95 @@ int jkf_dump_read(int handle, uint32_t index, void *buf, uint64_t cap);
  * where regionCount / totalBlobBytes get patched into the header. */
 int jkf_dump_close(int handle);
 
+/* ---- File read (F.5.6 / F.9) ----------------------------------------- */
+
+/* Returns the size of the file at `path` (UTF-8), or a negative JKF_E_*. */
+int jkf_file_size(const char *path);
+
+/* Reads up to `len` bytes from `path` (UTF-8) starting at `offset`.
+ * Returns the number of bytes read, JKF_E_NOTFOUND, JKF_E_ACCESS, JKF_E_OS,
+ * or JKF_E_TOOSMALL (if buf is too small). */
+int jkf_file_read(const char *path, uint64_t offset, void *buf, uint64_t len);
+
+/* ---- Baseline hash DB (F.9) ------------------------------------------ */
+
+#define JKF_BASELINE_FORMAT_VERSION 1u
+#define JKF_BASELINE_MODULE_VERSION 1u
+#define JKF_BASELINE_PAGE_VERSION   1u
+
+/* On-disk layout (also spelled out in baseline-format.md):
+ *
+ *   [ JkfBaselineHeader ]
+ *   repeated moduleCount times:
+ *     [ JkfBaselineModuleEntry ]
+ *     repeated pageCount times:
+ *       [ JkfBaselinePageEntry ]
+ */
+
+typedef struct JkfBaselineHeader {
+    char     magic[8];         /* "JKYBASE\0" */
+    uint32_t formatVersion;    /* JKF_BASELINE_FORMAT_VERSION */
+    uint32_t headerSize;       /* sizeof(JkfBaselineHeader) == 64 */
+    uint32_t moduleCount;      /* filled in at jkf_baseline_close */
+    uint32_t pageCount;        /* filled in at jkf_baseline_close, total across modules */
+    uint64_t timestamp;        /* Windows FILETIME */
+    uint8_t  reserved[32];     /* 0 */
+} JkfBaselineHeader;
+
+JKF_STATIC_ASSERT(sizeof(JkfBaselineHeader) == 64, "JkfBaselineHeader layout");
+
+typedef struct JkfBaselineModuleEntry {
+    uint32_t version;          /* JKF_BASELINE_MODULE_VERSION */
+    uint32_t pageCount;        /* pages immediately following this entry */
+    uint64_t preferredBase;    /* ImageBase, informational */
+    char     name[64];         /* module basename (e.g. "ntdll.dll"), NUL-padded */
+} JkfBaselineModuleEntry;
+
+JKF_STATIC_ASSERT(sizeof(JkfBaselineModuleEntry) == 80, "JkfBaselineModuleEntry layout");
+
+typedef struct JkfBaselinePageEntry {
+    uint32_t version;          /* JKF_BASELINE_PAGE_VERSION */
+    uint32_t pageOffset;       /* byte offset within .text, multiple of 4096 */
+    uint64_t hash;             /* FNV-1a 64-bit hash of the normalized page */
+} JkfBaselinePageEntry;
+
+JKF_STATIC_ASSERT(sizeof(JkfBaselinePageEntry) == 16, "JkfBaselinePageEntry layout");
+
+/* --- write side --- */
+
+/* Creates or opens `path` (UTF-8) for baseline writing. If `append` is non-zero,
+ * opens an existing baseline for appending (new modules added, existing ones skipped).
+ * Returns a positive baseline-write token, or a negative JKF_E_*. */
+int jkf_baseline_open_write(const char *path, int append);
+
+/* Records one module in the baseline. Subsequent jkf_baseline_put_page calls
+ * append pages to this module. `name` should be the module basename (e.g. "ntdll.dll"),
+ * `preferredBase` is the ImageBase (informational). Returns JKF_OK. */
+int jkf_baseline_put_module(int handle, const char *name, uint64_t preferredBase);
+
+/* Appends one page hash to the current module. `pageOffset` is the byte offset
+ * within the module's .text section (multiple of 4096). Returns JKF_OK. */
+int jkf_baseline_put_page(int handle, uint32_t pageOffset, uint64_t hash);
+
+/* Closes the baseline, patching moduleCount and pageCount into the header.
+ * Returns JKF_OK or a negative JKF_E_*. */
+int jkf_baseline_close(int handle);
+
+/* --- read side --- */
+
+/* Opens an existing baseline (UTF-8 path) and indexes it. Returns a positive
+ * baseline-read token, or a negative JKF_E_*. */
+int jkf_baseline_open_read(const char *path);
+
+/* Finds a page's hash in the baseline by module name and page offset.
+ * Writes the hash (a u64) to `hashOut` if found and returns JKF_OK.
+ * Returns JKF_E_NOTFOUND if the module or page is not in the baseline. */
+int jkf_baseline_find_page(int handle, const char *moduleName,
+                           uint32_t pageOffset, void *hashOut, uint64_t cap);
+
+/* Closes a baseline read token. */
+int jkf_baseline_close(int handle);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
