@@ -33,6 +33,12 @@ extern "C" jkf_modules(handle: i32, out: rawptr, cap: u64, names: rawptr, namesC
 extern "C" jkf_mapped_name(handle: i32, addr: u64, names: rawptr, namesCap: u64) -> i32;
 extern "C" jkf_threads(pid: u32, out: rawptr, cap: u64) -> i32;
 extern "C" jkf_read(handle: i32, addr: u64, buf: rawptr, len: u64) -> i32;
+extern "C" jkf_file_size(path: ptr<char>) -> i32;
+extern "C" jkf_file_read(path: ptr<char>, offset: u64, buf: rawptr, len: u64) -> i32;
+extern "C" jkf_baseline_open_write(path: ptr<char>, append: i32) -> i32;
+extern "C" jkf_baseline_put_module(handle: i32, name: ptr<char>, preferredBase: u64) -> i32;
+extern "C" jkf_baseline_put_page(handle: i32, pageOffset: u32, hash: u64) -> i32;
+extern "C" jkf_baseline_close(handle: i32) -> i32;
 
 // jockyrt records, overlaid on the buffers jockyrt fills (see abi.md).
 
@@ -605,7 +611,71 @@ func heuristic_pe_signature(reg: ptr<RegionRec>, handle: i32, isInModule: bool) 
 }
 
 // F.5.5: flagged by offline list comparison (not implemented in online scan).
-// F.5.6: image text differs from disk (requires file I/O; marked SHOULD, skipped for now).
+// F.5.6: image text differs from disk (disk-file comparison path for tampering detection).
+func heuristic_image_tampered(handle: i32, reg: ptr<RegionRec>, modPath: ptr<char>, modBase: u64) -> ptr<Finding> {
+    if (modPath == null) { return null; }
+
+    // Try to read the on-disk file.
+    var fileSize = jkf_file_size(modPath) as int;
+    if (fileSize < 1024) { return null; }  // File not readable or too small
+
+    // Read PE headers from disk.
+    var headerBuf: char[4096];
+    var readLen = jkf_file_read(modPath, 0 as u64, &headerBuf[0] as rawptr, 4096 as u64) as int;
+    if (readLen < 64) { return null; }
+
+    // Parse PE headers.
+    var nt = pe_headers(&headerBuf[0], readLen);
+    if (nt == null) { return null; }
+
+    // Find .text section.
+    var textSect = pe_find_section(nt, &headerBuf[0], &".text\0\0\0"[0]);
+    if (textSect == null) { return null; }
+
+    var textRva = (*textSect).VirtualAddress as u64;
+    var textSize = (*textSect).VirtualSize as int;
+    var textPointer = (*textSect).PointerToRawData as int;
+
+    if (textSize <= 0) { return null; }
+
+    // Compare one page of .text (the base page of the region).
+    var pageSize = 4096;
+    if (pageSize > textSize) { pageSize = textSize; }
+
+    // Read the live .text bytes from the target.
+    var liveBuf: char[4096];
+    var liveReadLen = jkf_read(handle, modBase + textRva, &liveBuf[0] as rawptr, pageSize as u64) as int;
+    if (liveReadLen <= 0) { return null; }
+
+    // Read the disk-derived .text bytes.
+    var diskBuf: char[4096];
+    var diskReadLen = jkf_file_read(modPath, textPointer as u64, &diskBuf[0] as rawptr, pageSize as u64) as int;
+    if (diskReadLen <= 0) { return null; }
+
+    // Compare: if bytes differ, the .text has been modified (tampered or patched).
+    if (liveReadLen != diskReadLen) {
+        var result: Finding;
+        result.base = modBase;
+        result.size = (*reg).size;
+        result.reason = &"image-tampered"[0];
+        result.severity = 3;  // High severity - code tampering is serious
+        var r = &result;
+        return r;
+    }
+
+    if (!bytes_match(&liveBuf[0], &diskBuf[0], liveReadLen)) {
+        var result: Finding;
+        result.base = modBase;
+        result.size = (*reg).size;
+        result.reason = &"image-tampered"[0];
+        result.severity = 3;
+        var r = &result;
+        return r;
+    }
+
+    return null;
+}
+
 // F.5.7: thread start address anomaly - checks if thread startAddr is in a module.
 func heuristic_thread_anomaly(startAddr: u64, modBase: u64, modSize: u64, isInModule: bool) -> ptr<Finding> {
     // If the thread starts outside any module, it's suspicious.
@@ -820,6 +890,33 @@ func inventory(handle: i32, pid: u32, modBuf: rawptr, modCap: u64) -> int {
                     findingCount = findingCount + 1;
                 }
             }
+
+            // F.5.6: Image text differs from disk (only for base region of each module).
+            if ((isInMod != 0) && (reg.base == minModBase)) {
+                // Look up the module path.
+                var modPath: ptr<char> = null;
+                var mi = 0;
+                while (mi < modCount) {
+                    var mods = modBuf as ptr<ModuleRec>;
+                    var m = mods + mi;
+                    if ((*m).base == minModBase) {
+                        modPath = &modNames[0] + (*m).pathOff;
+                        break;
+                    }
+                    mi = mi + 1;
+                }
+
+                if (modPath != null) {
+                    finding = heuristic_image_tampered(handle, &reg, modPath, minModBase);
+                    if (finding != null) {
+                        if (findingCount < 200) {
+                            var f = &findings[findingCount];
+                            *f = *finding;
+                            findingCount = findingCount + 1;
+                        }
+                    }
+                }
+            }
         }
 
         addr = reg.base + reg.size;
@@ -906,6 +1003,154 @@ func run_inventory(pid: u32) -> int {
     printf(&tail[0], n);
 
     jkf_close(h);
+    return 0;
+}
+
+func run_baseline_build(pid: u32, outPath: ptr<char>) -> int {
+    if (outPath == null) {
+        var e = "jocky-mem: baseline: --out <path> required\n";
+        printf(&e[0], 0);
+        return 2;
+    }
+
+    var acc: AccessRec;
+    var h = jkf_open(pid, false, &acc as rawptr, 16 as u64);
+    if (h < 0) {
+        var e = "jocky-mem: cannot open pid %u (error %d)\n";
+        printf(&e[0], pid, h);
+        return 1;
+    }
+
+    var nm: char[260];
+    var nl = jkf_process_name(pid, &nm[0] as rawptr, 260 as u64);
+    if (nl < 0) { nm[0] = 0 as char; }
+    var banner = "jocky-mem baseline build  pid=%u  name=%s  out=%s\n";
+    printf(&banner[0], pid, &nm[0], outPath);
+
+    // Load modules.
+    var modBuf: ModuleRec[256];
+    var modNames: char[65536];
+    var modCount = jkf_modules(h, &modBuf[0] as rawptr, 256u64 * 40u64, &modNames[0] as rawptr, 65536u64);
+    if (modCount < 0) { modCount = 0; }
+
+    // Open baseline for writing (append mode).
+    var blHandle = jkf_baseline_open_write(outPath, 1);
+    if (blHandle < 0) {
+        var e = "jocky-mem: cannot open baseline at %s (error %d)\n";
+        printf(&e[0], outPath, blHandle);
+        jkf_close(h);
+        return 1;
+    }
+
+    var pagesAdded = 0;
+    var modulesAdded = 0;
+
+    // For each module, read its on-disk file and hash .text pages.
+    var i = 0;
+    while (i < modCount) {
+        var mods = &modBuf[0];
+        var m = mods + i;
+        var modName = &modNames[0] + (*m).nameOff;
+        var modPath = &modNames[0] + (*m).pathOff;
+        var modBase = (*m).base;
+
+        // Try to read the on-disk PE file.
+        var fileSize = jkf_file_size(modPath) as int;
+        if (fileSize < 1024) {
+            // File not readable or too small.
+            i = i + 1;
+            continue;
+        }
+
+        // Read PE headers from disk.
+        var headerBuf: char[4096];
+        var readLen = jkf_file_read(modPath, 0 as u64, &headerBuf[0] as rawptr, 4096 as u64) as int;
+        if (readLen < 64) {
+            i = i + 1;
+            continue;
+        }
+
+        // Parse PE headers.
+        var nt = pe_headers(&headerBuf[0], readLen);
+        if (nt == null) {
+            i = i + 1;
+            continue;
+        }
+
+        // Find .text section.
+        var textSect = pe_find_section(nt, &headerBuf[0], &".text\0\0\0"[0]);
+        if (textSect == null) {
+            i = i + 1;
+            continue;
+        }
+
+        var textRva = (*textSect).VirtualAddress as int;
+        var textSize = (*textSect).VirtualSize as int;
+        var textPointer = (*textSect).PointerToRawData as int;
+
+        if (textSize <= 0) {
+            i = i + 1;
+            continue;
+        }
+
+        // Record this module to the baseline.
+        var preferredBase = (*nt).OptionalHeader.ImageBase;
+        var modNameStr = modName;
+        var rc = jkf_baseline_put_module(blHandle, modNameStr, preferredBase);
+        if (rc < 0) {
+            var e = "jocky-mem: baseline put_module failed (error %d)\n";
+            printf(&e[0], rc);
+            jkf_close(h);
+            jkf_baseline_close(blHandle);
+            return 1;
+        }
+        modulesAdded = modulesAdded + 1;
+
+        // Hash each 4096-byte page of .text from disk.
+        var pageIdx = 0;
+        while (pageIdx * 4096 < textSize) {
+            var pageOffset = pageIdx * 4096;
+            var pageFileOffset = textPointer + pageOffset;
+            var pageReadSize = 4096;
+            if ((pageOffset + pageReadSize) > textSize) {
+                pageReadSize = textSize - pageOffset;
+            }
+
+            // Read this page from the on-disk file.
+            var pageBuf: char[4096];
+            var pageReadLen = jkf_file_read(modPath, pageFileOffset as u64, &pageBuf[0] as rawptr, pageReadSize as u64) as int;
+            if (pageReadLen < 0) {
+                // Error reading this page; skip it.
+                pageIdx = pageIdx + 1;
+                continue;
+            }
+
+            // Compute FNV-1a hash of this page.
+            var pageHash = fnv1a_hash(&pageBuf[0], pageReadLen);
+
+            // Record this page to the baseline.
+            var rc2 = jkf_baseline_put_page(blHandle, pageOffset as u32, pageHash);
+            if (rc2 < 0) {
+                var e = "jocky-mem: baseline put_page failed (error %d)\n";
+                printf(&e[0], rc2);
+                jkf_close(h);
+                jkf_baseline_close(blHandle);
+                return 1;
+            }
+            pagesAdded = pagesAdded + 1;
+
+            pageIdx = pageIdx + 1;
+        }
+
+        i = i + 1;
+    }
+
+    // Close baseline.
+    jkf_baseline_close(blHandle);
+    jkf_close(h);
+
+    var tail = "Baseline built: %d modules, %d pages\n";
+    printf(&tail[0], modulesAdded, pagesAdded);
     return 0;
 }
 
@@ -1071,6 +1316,41 @@ if (strcmp(cmd, &"inventory"[0]) == 0) {
         return 2;
     }
     return run_inventory(pid as u32);
+}
+
+if (strcmp(cmd, &"baseline"[0]) == 0) {
+    if (argc < 3) { return usage(); }
+    if (strcmp(slots[2], &"build"[0]) != 0) { return usage(); }
+
+    // Parse --pid/--name and --out arguments.
+    var pid = -1;
+    var outPath: ptr<char> = null;
+    var i = 3;
+    while (i < argc) {
+        if (strcmp(slots[i], &"--pid"[0]) == 0) {
+            if (i + 1 >= argc) { return usage(); }
+            pid = strtoul(slots[i + 1], null, 10) as int;
+            i = i + 2;
+        } else if (strcmp(slots[i], &"--name"[0]) == 0) {
+            if (i + 1 >= argc) { return usage(); }
+            pid = jkf_pid_by_name(slots[i + 1]);
+            i = i + 2;
+        } else if (strcmp(slots[i], &"--out"[0]) == 0) {
+            if (i + 1 >= argc) { return usage(); }
+            outPath = slots[i + 1];
+            i = i + 2;
+        } else {
+            return usage();
+        }
+    }
+
+    if (pid < 0) {
+        var e = "jocky-mem: baseline: --pid or --name required\n";
+        printf(&e[0], 0);
+        return 2;
+    }
+
+    return run_baseline_build(pid as u32, outPath);
 }
 
 return usage();

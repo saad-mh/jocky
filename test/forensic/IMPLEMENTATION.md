@@ -130,12 +130,27 @@ Tests unelevated behavior:
 .\v5_v8_checks.ps1 -TestV6Determinism   # Individual tests
 ```
 
+## Recently Implemented (F.5.6, F.9)
+
+**F.5.6 - Image text differs from disk** and **F.9 - Baseline hash DB** are now implemented:
+- PE header struct-overlay parsing (Phase 1)
+- ASLR-aware relocation normalization (Phase 2)
+- FNV-1a page hashing (Phase 3)
+- jockyrt file I/O and baseline DB API (Phase 4a-b)
+- `baseline build --pid <p> --out db.bin` CLI subcommand (Phase 5)
+- F.5.6 heuristic wiring into inventory loop (Phase 6)
+- Test fixtures and e2e tests (Phase 7)
+- API documentation (Phase 8)
+
+Run `jocky-mem baseline build --pid <p> --out baseline.bin` to build a baseline, then `inventory` will detect image tampering.
+
 ## Next Steps
 
 1. **V.2 (False-positive corpus)**: Implement F.10 JIT allowlist in Part 3, then gate V.2 on that.
 2. **V.4 (Performance baseline)**: Measure on reference hardware and establish baseline.
 3. **V.7 socket API check**: Implement binary inspection tool for import table analysis.
-4. **F.5.3, F.5.5, F.5.6, F.5.8, F.5.9**: Implement remaining heuristics (marked SHOULD) and add fixtures.
+4. **F.5.3, F.5.5, F.5.8, F.5.9**: Implement remaining heuristics (marked SHOULD) and add fixtures.
+5. **F.5.6 refinements**: Add IAT-thunk/hotpatch tolerance (requires F.6 weighting).
 
 ## Architecture Notes
 

@@ -43,13 +43,13 @@ However, **cross-process scanning** (separate fixture processes) requires elevat
 | `f5_1_rwx` | F.5.1 | RWX allocation; write-then-exec |
 | `f5_2_exec_private` | F.5.2 | Private executable memory |
 | `f5_4_pe_sig` | F.5.4 | PE header in private memory |
+| `f5_6_hollow` | F.5.6 | Process hollowing (cross-process; requires elevation) |
 | `f5_7_thread_anomaly` | F.5.7 | Thread with anomalous start address |
 | `f5_10_single_page_exec` | F.5.10 | Single-page executable region |
 
 Not yet implemented:
 - F.5.3 (executable mapped data)
 - F.5.5 (loader list mismatch)
-- F.5.6 (text differs from disk)
 - F.5.8 (hook detection)
 - F.5.9 (entropy)
 

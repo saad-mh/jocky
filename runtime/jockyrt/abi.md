@@ -161,6 +161,12 @@ Written by `jkf_threads`, ascending by `tid`.
 | `jkf_thread_count` / `jkf_threads` | R.7      | ascending by tid               |
 | `jkf_dump_open_write` / `jkf_dump_put` / `jkf_dump_close` | R.9 | see `dump-format.md` |
 | `jkf_dump_open_read` / `jkf_dump_header` / `jkf_dump_region` / `jkf_dump_read` | R.9 | offline replay |
+| `jkf_file_size` / `jkf_file_read` | F.5.6 / F.9 | on-disk module file I/O (UTF-8 paths) |
+| `jkf_baseline_open_write` / `jkf_baseline_put_module` / `jkf_baseline_put_page` / `jkf_baseline_close` | F.9 | build baseline DB (sequential write, append-mode) |
+| `jkf_baseline_open_read` / `jkf_baseline_find_page` | F.5.6 / F.9 | query baseline DB |
 
 The dump container's on-disk layout (`JkfDumpHeader`, `JkfDumpRegionEntry`) is
 in `dump-format.md`.
+
+The baseline DB's on-disk layout (`JkfBaselineHeader`, `JkfBaselineModuleEntry`,
+`JkfBaselinePageEntry`) is in `baseline-format.md`.
