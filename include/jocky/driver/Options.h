@@ -36,8 +36,9 @@ struct Options {
     bool optimize = false;
 
     // `build` stop-early switches.
-    bool emitLlvm = false;  // --emit-llvm: print textual IR and stop
-    bool emitObj = false;   // --emit-obj:  write an object file and stop
+    bool emitLlvm = false;    // --emit-llvm: print textual IR and stop
+    bool emitObj = false;     // --emit-obj:  write an object file and stop
+    bool runInMemory = false;  // --run: JIT-compile and execute; no disk artifact
 
     // `build` behavior tweaks.
     bool keepTemps = false;    // --keep-temps: don't delete the intermediate .obj

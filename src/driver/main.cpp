@@ -35,6 +35,8 @@ const char *const kUsage =
     "                      [-l <lib>] [-L <dir>]\n"
     "                      [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
     "                      [--keep-temps] [--no-verify] [-v]\n"
+    "  jocky build <in.jk> --run [--obfuscate[=<passes>]] [--obf-seed <n>] [-v]\n"
+    "                      (JIT-compile and execute; no .obj or .exe written)\n"
     "  jocky check <in.jk>                    (front end + semantic analysis only)\n"
     "  jocky lex   --dump-tokens <in.jk>\n"
     "  jocky parse --dump-ast    <in.jk>\n"
@@ -123,6 +125,8 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
             opts.emitLlvm = true;
         } else if (a == "--emit-obj") {
             opts.emitObj = true;
+        } else if (a == "--run") {
+            opts.runInMemory = true;
         } else if (a == "--obfuscate") {
             opts.obfuscate = true;
         } else if (a.rfind("--obfuscate=", 0) == 0) {
