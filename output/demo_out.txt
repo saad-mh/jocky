@@ -1,0 +1,8 @@
+[JOCKY] JOCKY Forensic Scanner
+[JOCKY] SIH Hackathon — Component 1 Demo
+[JOCKY] Initialising process scan...
+[JOCKY] Process scan complete
+[JOCKY] svchost.exe — detected
+[JOCKY] explorer.exe — detected
+[JOCKY] malware.exe — not present
+[JOCKY] Forensic scan finished
