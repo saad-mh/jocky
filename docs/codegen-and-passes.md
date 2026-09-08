@@ -9,16 +9,16 @@ is the intended place for future IR transforms.
 `IRBuilder`. The rules are intentionally boring:
 
 - **One value type.** Everything is `i64`.
-- **Variables are memory.** `var x = e;` emits `%x = alloca i64` (in the
+- **Variables are memory.** `let x = e;` emits `%x = alloca i64` (in the
   function's entry block) and `store`. Reading `x` emits `load`. Assignment
   emits `store`. No hand-written SSA, no phi nodes.
-- **Control flow is explicit blocks.** `if` creates `if.then`, optionally
+- **Control flow is explicit blocks.** `check` creates `if.then`, optionally
   `if.else`, and `if.cont`, and wires branches between them. `while` creates
   `while.cond`, `while.body`, `while.end`. After lowering a block, if it has no
   terminator yet, a branch to the continuation block is added; at the end of a
   function, a missing terminator becomes `ret i64 0`.
 - **Comparisons.** As a condition, a comparison lowers straight to an `i1` that
-  the branch reads. As a value (`var b = a < c;`), the `i1` is zero-extended
+  the branch reads. As a value (`let b = a < c;`), the `i1` is zero-extended
   back to `i64`.
 - **`print`.** `getOrDeclarePrintf` declares `i32 @printf(ptr, ...)`.
   `internFormat` creates the `"%lld\n"` / `"%s\n"` global once per module.

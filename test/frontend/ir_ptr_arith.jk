@@ -13,9 +13,9 @@ func gap(a: ptr<int>, b: ptr<int>) -> int {
     return a - b;
 }
 
-var arr: int[4] = [0, 1, 2, 3];
-var addr = &arr[0] as u64;
-var back = (addr + 8) as ptr<int>;
+let arr: int[4] = [0, 1, 2, 3];
+let addr = &arr[0] to u64;
+let back = (addr + 8) to ptr<int>;
 print(*nth(&arr[0], 2) + gap(&arr[3], back) + sizeof(int[4]));
 
 // CHECK: define ptr @nth(ptr %base, i64 %i)

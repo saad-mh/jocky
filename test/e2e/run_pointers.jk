@@ -10,28 +10,28 @@ func bump(p: ptr<int>) {
     *p = *p + 1;
 }
 
-var x = 7;
-var p = &x;
+let x = 7;
+let p = &x;
 *p = 9;
 print(x);              // 9
 bump(p);
 print(x);              // 10
 
-var q: ptr<int> = null;
-if (q == null) { print(1); } else { print(0); }   // 1
-if (p == null) { print(1); } else { print(0); }   // 0
-if (p == &x)   { print(1); } else { print(0); }   // 1
+let q: ptr<int> = none;
+check (q == none) { print(1); } otherwise { print(0); }   // 1
+check (p == none) { print(1); } otherwise { print(0); }   // 0
+check (p == &x)   { print(1); } otherwise { print(0); }   // 1
 
-var buf: char[32];
-var mid = &buf[16];
+let buf: char[32];
+let mid = &buf[16];
 *mid = 'M';
-print(buf[16] as int); // 77
+print(buf[16] to int); // 77
 
-var raw: rawptr = p as rawptr;
-var again = raw as ptr<int>;
+let raw: rawptr = p to rawptr;
+let again = raw to ptr<int>;
 print(*again);         // 10
 
-var pp = &p;
+let pp = &p;
 *pp = &x;
 print(**pp);           // 10
 

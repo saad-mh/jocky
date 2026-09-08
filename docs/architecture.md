@@ -34,7 +34,7 @@ run finds every problem rather than stopping at the first.
 
 Input: the token list. Output: an *abstract syntax tree* (AST) - a tree of
 objects that mirrors the structure of the program (this function contains this
-block, which contains this `if`, whose condition is this comparison...).
+block, which contains this `check`, whose condition is this comparison...).
 
 The parser is *recursive descent*: there is one function per grammar rule
 (`parseStatement`, `parseExpr`, and so on) and they call each other the same way
@@ -57,7 +57,7 @@ every call must match a signature, and - from the L0 type-system milestone on -
 every expression must have a type its context accepts. It is a two-pass walk:
 first register every function's name and arity so calls resolve regardless of
 source order, then walk each body in source order. The scope model is v0's: no
-nested scopes, a `var` visible for the rest of its function once its initializer
+nested scopes, a `let` visible for the rest of its function once its initializer
 has been checked.
 
 `jocky check <file>.jk` runs the pipeline up to and including this stage and
@@ -78,7 +78,7 @@ The lowering is deliberately simple. Every JOCKY value is a 64-bit integer.
 Every local variable is a stack slot: declaring it emits an `alloca`, reading it
 emits a `load`, assigning to it emits a `store`. We do not try to be clever;
 `-O1` can clean this up later, and `-O0` leaves it as-is, which is still correct.
-`if` and `while` are built by hand out of basic blocks and branches. `print` is a
+`check` and `while` are built by hand out of basic blocks and branches. `print` is a
 builtin: the compiler declares C's `printf`, creates a format string
 (`"%lld\n"` for integers, `"%s\n"` for strings), and emits a call.
 

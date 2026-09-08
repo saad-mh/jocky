@@ -44,28 +44,28 @@ Top-level statements run as an implicit `main`. No boilerplate required.
 ### Variables and arithmetic
 
 ```jk
-var a = 6;
-var b = 7;
-var sum = a + b;      // int (64-bit, the default)
+let a = 6;
+let b = 7;
+let sum = a + b;      // int (64-bit, the default)
 print(sum);           // 13
 ```
 
 ### Control flow
 
 ```jk
-// while + if/else
-var i = 1;
-var total = 0;
+// while + check/otherwise
+let i = 1;
+let total = 0;
 while (i <= 10) {
     total = total + i;
     i = i + 1;
 }
 print(total);  // 55
 
-var n = 5;
+let n = 5;
 while (n > 0) {
-    if (n % 2 == 0) { print(0); }
-    else             { print(1); }
+    check (n % 2 == 0) { print(0); }
+    otherwise             { print(1); }
     n = n - 1;
 }
 ```
@@ -88,7 +88,7 @@ print(square(add(1, 2)));  // 9
 
 ```jk
 func fib(n: int) -> int {
-    if (n < 2) { return n; }
+    check (n < 2) { return n; }
     return fib(n - 1) + fib(n - 2);
 }
 
@@ -98,11 +98,11 @@ print(fib(10));  // 55
 ### Types
 
 ```jk
-var x: u32 = 42u32;       // sized unsigned integer
-var c: char = 'A';        // u8 / byte
-var flag: bool = true;
-var pi: double = 3.14159;
-var pf: float  = 3.14f;
+let x: u32 = 42u32;       // sized unsigned integer
+let c: char = 'A';        // u8 / byte
+let ok: flag = yes;
+let pi: double = 3.14159;
+let pf: float  = 3.14f;
 ```
 
 Sized integer suffixes: `i8 i16 i32 i64 u8 u16 u32 u64`.
@@ -110,11 +110,11 @@ Sized integer suffixes: `i8 i16 i32 i64 u8 u16 u32 u64`.
 ### Arrays and slices
 
 ```jk
-var arr: int[4] = [10, 20, 30, 40];
+let arr: int[4] = [10, 20, 30, 40];
 print(arr[2]);        // 30
 print(arr.len);       // 4
 
-var s: int[] = arr[1:3];   // borrowed slice of elements 1..2
+let s: int[] = arr[1:3];   // borrowed slice of elements 1..2
 print(s[0]);               // 20
 print(s.len);              // 2
 ```
@@ -127,24 +127,24 @@ struct Point {
     y: int,
 }
 
-var p: Point;
+let p: Point;
 p.x = 3;
 p.y = 4;
 
-var pp: ptr<Point> = &p;
+let pp: ptr<Point> = &p;
 print(pp.x);              // 3 — ptr<S> auto-dereferences
 
-var raw: rawptr = p as rawptr;
-var back: ptr<Point> = raw as ptr<Point>;
+let raw: rawptr = p to rawptr;
+let back: ptr<Point> = raw to ptr<Point>;
 print(back.y);            // 4
 ```
 
 ### Casts
 
 ```jk
-var big: int = 1000;
-var small: u8 = big as u8;    // explicit narrowing
-var addr: u64 = &big as u64;  // pointer → integer address
+let big: int = 1000;
+let small: u8 = big to u8;    // explicit narrowing
+let addr: u64 = &big to u64;  // pointer → integer address
 ```
 
 ### Extern / FFI

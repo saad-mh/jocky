@@ -6,7 +6,7 @@
 // RUN: "%t.exe" | %FileCheck "%s"
 
 func fib(n: int) -> int {
-    if (n < 2) {
+    check (n < 2) {
         return n;
     }
     return fib(n - 1) + fib(n - 2);
@@ -16,7 +16,7 @@ func mul3(x: int) -> int {
     return x * 3;
 }
 
-var i = 0;
+let i = 0;
 while (i < 8) {
     print(mul3(fib(i)));
     i = i + 1;

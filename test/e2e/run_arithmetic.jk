@@ -2,8 +2,8 @@
 // RUN: %jocky build "%s" -o "%t.exe"
 // RUN: "%t.exe" | %FileCheck "%s"
 
-var a = 6;
-var b = 7;
+let a = 6;
+let b = 7;
 print(a + b);        // 13
 print(b - a);        // 1
 print(a * b);        // 42

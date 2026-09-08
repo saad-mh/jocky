@@ -10,10 +10,10 @@ func get_x(r: ptr<Ray>) -> double {
     return r.origin.x;
 }
 
-var ray: Ray;
+let ray: Ray;
 ray.origin.y = 2.0;
 ray.tag = 7;
-print(get_x(&ray) + (ray.tag as double));
+print(get_x(&ray) + (ray.tag to double));
 print(sizeof(Ray) + offsetof(Ray, tag));
 
 // CHECK-DAG: %struct.Vec3 = type { double, double, double }

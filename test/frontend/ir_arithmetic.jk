@@ -1,7 +1,7 @@
 // RUN: %jocky build --emit-llvm "%s" | %FileCheck "%s"
 
-var a = 6;
-var b = 7;
+let a = 6;
+let b = 7;
 print(a + b);
 print(a - b);
 print(a * b);

@@ -8,28 +8,28 @@ struct Dup { b: int }
 
 struct BadField {
     x: int,
-    x: bool,
+    x: flag,
 }
 
-struct Voidy { v: void }
+struct Voidy { v: nothing }
 
 struct Node {
     next: Node,
     val: int,
 }
 
-var n = 3;
-var m = n.field;
+let n = 3;
+let m = n.field;
 
-var o = offsetof(Nope, x);
+let o = offsetof(Nope, x);
 
 struct Ok { p: ptr<Ok> }
-var k: Ok;
-var bad = offsetof(Ok, missing);
+let k: Ok;
+let bad = offsetof(Ok, missing);
 
 // CHECK-DAG: :7:1: error: struct 'Dup' is defined more than once
 // CHECK-DAG: :11:5: error: duplicate field 'x' in struct 'BadField'
-// CHECK-DAG: :14:19: error: a struct field cannot have type 'void'
+// CHECK-DAG: :14:19: error: a struct field cannot have type 'nothing'
 // CHECK-DAG: :17:11: error: struct 'Node' contains itself by value (use ptr<Node> for a self-reference)
 // CHECK-DAG: :22:10: error: type int has no member 'field'
 // CHECK-DAG: :24:9: error: unknown struct 'Nope'

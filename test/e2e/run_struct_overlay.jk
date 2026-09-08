@@ -12,29 +12,29 @@ struct DosHeader {
     e_lfanew: i32,    // 60 .. 63
 }
 
-var buf: char[64];
-var i = 0;
+let buf: char[64];
+let i = 0;
 while (i < 64) {
-    buf[i] = 0 as char;
+    buf[i] = 0 to char;
     i = i + 1;
 }
-buf[0] = 0x4D as char;   // 'M'
-buf[1] = 0x5A as char;   // 'Z'
-buf[60] = 0x08 as char;
-buf[61] = 0x01 as char;  // e_lfanew = 0x0108 = 264
+buf[0] = 0x4D to char;   // 'M'
+buf[1] = 0x5A to char;   // 'Z'
+buf[60] = 0x08 to char;
+buf[61] = 0x01 to char;  // e_lfanew = 0x0108 = 264
 
-var hdr = buf as ptr<DosHeader>;
+let hdr = buf to ptr<DosHeader>;
 print(hdr.e_magic);                       // 0x5A4D = 23117
 print(hdr.e_lfanew);                      // 264
 print(offsetof(DosHeader, e_lfanew));     // 60
 print(sizeof(DosHeader));                 // 64
 
-var raw = &buf[0] as rawptr;
-var hdr2 = raw as ptr<DosHeader>;
+let raw = &buf[0] to rawptr;
+let hdr2 = raw to ptr<DosHeader>;
 hdr2.e_lfanew = 512;
 print(hdr.e_lfanew);                      // 512  (same buffer)
-print(buf[60] as int);                    // 0    (0x200 low byte)
-print(buf[61] as int);                    // 2
+print(buf[60] to int);                    // 0    (0x200 low byte)
+print(buf[61] to int);                    // 2
 
 // CHECK:      23117
 // CHECK-NEXT: 264

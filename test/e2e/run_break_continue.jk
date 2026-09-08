@@ -5,31 +5,31 @@
 // `break` leaves the innermost loop, `continue` jumps to its condition. Nested
 // loops target the inner one.
 
-var sum = 0;
-var i = 0;
+let sum = 0;
+let i = 0;
 while (i < 100) {
     i = i + 1;
-    if (i == 5) { continue; }
-    if (i > 10) { break; }
+    check (i == 5) { skip; }
+    check (i > 10) { stop; }
     sum = sum + i;
 }
 print(sum);           // 1+2+3+4+6+7+8+9+10 = 50
 print(i);             // 11
 
-var j = 0;
-while (true) {
+let j = 0;
+while (yes) {
     j = j + 1;
-    if (j == 7) { break; }
+    check (j == 7) { stop; }
 }
 print(j);             // 7
 
 // nested: break only the inner loop
-var pairs = 0;
-var a = 0;
+let pairs = 0;
+let a = 0;
 while (a < 4) {
-    var b = 0;
+    let b = 0;
     while (b < 100) {
-        if (b >= a) { break; }
+        check (b >= a) { stop; }
         pairs = pairs + 1;
         b = b + 1;
     }

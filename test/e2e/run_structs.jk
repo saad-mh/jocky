@@ -20,7 +20,7 @@ func region_end(mbi: ptr<MemoryBasicInformation>) -> u64 {
     return mbi.baseAddress + mbi.regionSize;
 }
 
-var mbi: MemoryBasicInformation;
+let mbi: MemoryBasicInformation;
 mbi.baseAddress = 0x140000000;
 mbi.regionSize = 0x2000;
 mbi.protect = 0x40;
@@ -35,7 +35,7 @@ print(sizeof(MemoryBasicInformation));       // 48
 print(offsetof(MemoryBasicInformation, regionSize));  // 24
 print(offsetof(MemoryBasicInformation, protect));     // 36
 
-var copy = mbi;
+let copy = mbi;
 copy.protect = 0x20;
 print(mbi.protect);                     // 64  (copy is independent)
 print(copy.protect);                    // 32

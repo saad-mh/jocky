@@ -8,15 +8,15 @@ func store_through(p: ptr<int>, v: int) {
     *p = v;
 }
 
-var x = 1;
+let x = 1;
 store_through(&x, 42);
 
-var buf: char[16];
-var m = &buf[8];
+let buf: char[16];
+let m = &buf[8];
 *m = 'Q';
 
-var q: ptr<int> = null;
-if (q == &x) { print(1); }
+let q: ptr<int> = none;
+check (q == &x) { print(1); }
 
 // CHECK: define i64 @store_through(ptr %p, i64 %v)
 // CHECK:   %p1 = alloca ptr

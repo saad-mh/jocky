@@ -3,22 +3,22 @@
 // L1.4 / L1.5 diagnostics: only `ptr +/- int`, `int + ptr`, and
 // `ptr<T> - ptr<T>` are defined; `sizeof` needs a sized type.
 
-var n = 5;
-var p = &n;
-var q = &n;
+let n = 5;
+let p = &n;
+let q = &n;
 
-var a = p + q;      // ptr + ptr
-var b = p * 2;      // no `*` on pointers
-var c = 2 - p;      // int - ptr
+let a = p + q;      // ptr + ptr
+let b = p * 2;      // no `*` on pointers
+let c = 2 - p;      // int - ptr
 
-var buf: char[4];
-var cp = &buf[0];
-var d = p - cp;     // mismatched element types
+let buf: char[4];
+let cp = &buf[0];
+let d = p - cp;     // mismatched element types
 
-var e = sizeof(void);
+let e = sizeof(nothing);
 
 // CHECK-DAG: :10:11: error: operator '+' cannot combine ptr<int> and ptr<int>
 // CHECK-DAG: :11:11: error: operator '*' cannot combine ptr<int> and int
 // CHECK-DAG: :12:11: error: operator '-' cannot combine int and ptr<int>
 // CHECK-DAG: :16:11: error: subtracting incompatible pointer types ptr<int> and ptr<char>
-// CHECK-DAG: :18:9: error: sizeof needs a sized type, not 'void'
+// CHECK-DAG: :18:9: error: sizeof needs a sized type, not 'nothing'

@@ -22,7 +22,7 @@ A slightly bigger one, `examples/fib.jk`:
 
 ```
 func fib(n) {
-    if (n < 2) {
+    check (n < 2) {
         return n;
     }
     return fib(n - 1) + fib(n - 2);
@@ -63,13 +63,13 @@ See [docs/testing.md](docs/testing.md).
 ## The language
 
 A small static type system - `int` (64-bit, the default), `char` (`u8`, the
-byte type), `bool`, `double` / `float`, and the sized aliases `i8`..`i64` /
-`u8`..`u64` - with literals (`0x2A`, `42u32`, `3.14f`, `'A'`, `true`), `expr as
+byte type), `flag`, `double` / `float`, and the sized aliases `i8`..`i64` /
+`u8`..`u64` - with literals (`0x2A`, `42u32`, `3.14f`, `'A'`, `yes`), `expr to
 T` casts, widening-only implicit conversions, and type-directed `print`.
 Fixed arrays `T[N]` and borrowed slices `T[]` (`arr[i]`, `arr[a:b]`, `arr.len`,
 `[1, 2, 3]`); a string literal is a NUL-terminated `char[]`. Functions annotate
-their parameters (`func f(a: int) -> bool`); locals infer their type.
-Variables, `if` / `else`, `while`, arithmetic / comparison / cast operators.
+their parameters (`func f(a: int) -> flag`); locals infer their type.
+Variables, `check` / `otherwise`, `while`, arithmetic / comparison / cast operators.
 Top-level statements run as an implicit `main`.
 
 The full grammar is in [docs/grammar.md](docs/grammar.md). The compiler's

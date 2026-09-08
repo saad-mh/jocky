@@ -6,29 +6,29 @@
 // `(base as ptr<int>) + 2` equals `base + 8`; `p - q` is an element count.
 // L1.5 acceptance: sizeof(u32) == 4, sizeof(char[16]) == 16.
 
-var raw_a = (0x1000 as rawptr) + 0x40;
-var raw_b = 0x1040 as rawptr;
-if (raw_a == raw_b) { print(1); } else { print(0); }   // 1
+let raw_a = (0x1000 to rawptr) + 0x40;
+let raw_b = 0x1040 to rawptr;
+check (raw_a == raw_b) { print(1); } otherwise { print(0); }   // 1
 
-var base = 0x2000;
-var bp = base as ptr<int>;
+let base = 0x2000;
+let bp = base to ptr<int>;
 // A ptr<int> steps by sizeof(int) == 8: `+ 1` is `base + 8`, `+ 2` is `base + 16`.
-if (((bp + 1) as u64) == ((base + 8) as u64))  { print(1); } else { print(0); }  // 1
-if (((bp + 2) as u64) == ((base + 16) as u64)) { print(1); } else { print(0); }  // 1
+check (((bp + 1) to u64) == ((base + 8) to u64))  { print(1); } otherwise { print(0); }  // 1
+check (((bp + 2) to u64) == ((base + 16) to u64)) { print(1); } otherwise { print(0); }  // 1
 
-var a: int[6] = [0, 1, 2, 3, 4, 5];
-var p = &a[0];
-var q = &a[5];
+let a: int[6] = [0, 1, 2, 3, 4, 5];
+let p = &a[0];
+let q = &a[5];
 print(q - p);                    // 5
 print(*(p + 3));                 // 3
 print(*((q - 2)));               // 3
 print((&a[4] - p));              // 4
 
-var bytes: char[8];
-var bp = &bytes[0];
-var third = (bp as rawptr) + 3;
-*(third as ptr<char>) = 'z';
-print(bytes[3] as int);          // 122
+let bytes: char[8];
+let bp = &bytes[0];
+let third = (bp to rawptr) + 3;
+*(third to ptr<char>) = 'z';
+print(bytes[3] to int);          // 122
 
 print(sizeof(u32));              // 4
 print(sizeof(char[16]));         // 16

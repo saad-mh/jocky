@@ -5,14 +5,14 @@
 // different width is brought to the value's type first.
 
 func ops(a: u32, b: u32, s: i32) -> u32 {
-    var x = a & b;
+    let x = a & b;
     x = x | b;
     x = x ^ a;
     x = x << 3;
     x = x >> 2;          // u32 -> lshr
     x = ~x;
-    var signed = s >> 1; // i32 -> ashr
-    return x + (signed as u32);
+    let signed = s >> 1; // i32 -> ashr
+    return x + (signed to u32);
 }
 
 func widen_count(v: u32, n: i64) -> u32 {

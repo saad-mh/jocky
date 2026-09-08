@@ -3,19 +3,19 @@
 // RUN: "%t.exe" | %FileCheck "%s"
 
 // Sum 1..5 with a while loop, then print each countdown value's parity.
-var i = 1;
-var total = 0;
+let i = 1;
+let total = 0;
 while (i <= 5) {
     total = total + i;
     i = i + 1;
 }
 print(total);
 
-var n = 3;
+let n = 3;
 while (n > 0) {
-    if (n % 2 == 0) {
+    check (n % 2 == 0) {
         print(0);
-    } else {
+    } otherwise {
         print(1);
     }
     n = n - 1;

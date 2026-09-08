@@ -12,10 +12,10 @@ extern "C" Dup() -> int;
 extern "C" Dup() -> int;
 
 extern "C" Fixed(a: int, b: int) -> int;
-var x = Fixed(1);
+let x = Fixed(1);
 
 extern "C" Va(fmt: ptr<char>, ...) -> int;
-var y = Va();
+let y = Va();
 
 // CHECK-DAG: :8:27: error: pass a struct to an extern by pointer ('ptr<Big>'), not by value
 // CHECK-DAG: :9:1: error: an extern cannot return a struct by value

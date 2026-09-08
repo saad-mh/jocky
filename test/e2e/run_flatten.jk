@@ -6,11 +6,11 @@
 // RUN: "%t.exe" | %FileCheck "%s"
 
 func collatz(n: int) -> int {
-    var steps = 0;
+    let steps = 0;
     while (n != 1) {
-        if (n % 2 == 0) {
+        check (n % 2 == 0) {
             n = n / 2;
-        } else {
+        } otherwise {
             n = 3 * n + 1;
         }
         steps = steps + 1;

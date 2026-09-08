@@ -7,7 +7,7 @@ func add(a: int, b: int) -> int {
 }
 
 func max(a: int, b: int) -> int {
-    if (a > b) {
+    check (a > b) {
         return a;
     }
     return b;

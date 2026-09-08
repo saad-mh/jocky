@@ -58,7 +58,7 @@ End-to-end example (`test/e2e/run_fib.jk`):
     // RUN: "%t.exe" | %FileCheck "%s"
 
     func fib(n) {
-        if (n < 2) { return n; }
+        check (n < 2) { return n; }
         return fib(n - 1) + fib(n - 2);
     }
 

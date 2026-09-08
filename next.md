@@ -81,9 +81,9 @@ The feature is fully implemented, documented, and ready for testing. See "Comple
 **What was done:**
 1. Add `extern "C"` declarations for 6 new jockyrt functions (lines ~35)
 2. Implement `func run_baseline_build(pid: u32, outPath: ptr<char>) -> int`:
-   - Call `jkf_open(pid, false, ...)` to open target
+   - Call `jkf_open(pid, no, ...)` to open target
    - Call `jkf_modules(...)` to get module table
-   - Call `jkf_baseline_open_write(outPath, 1)` with append=true
+   - Call `jkf_baseline_open_write(outPath, 1)` with append=yes
    - For each module:
      - `jkf_file_read(modulePathOff, ...)` to read on-disk PE headers + sections
      - Parse `.text` section via `pe_find_section(nt, ".text\0\0\0", ...)`
@@ -92,7 +92,7 @@ The feature is fully implemented, documented, and ready for testing. See "Comple
        - `jkf_baseline_put_page(handle, pageOffset, hash)`
      - `jkf_baseline_put_module(...)` for this module
    - `jkf_baseline_close(handle)`
-3. Wire into CLI dispatch (~lines 680-710): add `if (strcmp(cmd, "baseline") == 0)` branch, parse `--pid|--name` + `--out <path>`
+3. Wire into CLI dispatch (~lines 680-710): add `check (strcmp(cmd, "baseline") == 0)` branch, parse `--pid|--name` + `--out <path>`
 4. **Selftest:** Run `jocky-mem baseline build --pid <self> --out baseline.bin`, verify output file exists and contains page hashes for main module + ntdll.dll
 
 ### Phase 6 ✅ — F.5.6 Image-Tamper Heuristic (`.jk` only)

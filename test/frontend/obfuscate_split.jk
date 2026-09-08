@@ -7,11 +7,11 @@
 // RUN: %jocky build --emit-llvm --obfuscate=split --obf-seed 5 "%s" > "%t.2.ll"
 // RUN: diff "%t.1.ll" "%t.2.ll"
 
-var a = 1;
-var b = a + 2;
-var c = b + 3;
-var d = c + 4;
-var e = d + 5;
+let a = 1;
+let b = a + 2;
+let c = b + 3;
+let d = c + 4;
+let e = d + 5;
 print(e);
 
 // CHECK-LABEL: define i64 @main()

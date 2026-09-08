@@ -2,18 +2,18 @@
 //
 // `break` / `continue` are only valid inside a loop body.
 
-break;
+stop;
 
 func f() -> int {
-    continue;
+    skip;
     return 0;
 }
 
-var i = 0;
+let i = 0;
 while (i < 3) {
     i = i + 1;
-    break;          // fine
+    stop;          // fine
 }
 
-// CHECK-DAG: :5:1: error: 'break' outside a loop
-// CHECK-DAG: :8:5: error: 'continue' outside a loop
+// CHECK-DAG: :5:1: error: 'stop' outside a loop
+// CHECK-DAG: :8:5: error: 'skip' outside a loop

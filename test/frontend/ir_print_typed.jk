@@ -4,12 +4,12 @@
 //   int -> %lld, unsigned -> %llu (zext to i64), char -> %c (zext to i32),
 //   bool -> %s with a "true"/"false" select, double/float -> %g (float fpext'd).
 
-var s: int  = 1;
-var u: u32  = 2;
-var c: char = 'x';
-var b: bool = true;
-var d: double = 1.5;
-var f: float  = 2.5f;
+let s: int  = 1;
+let u: u32  = 2;
+let c: char = 'x';
+let b: flag = yes;
+let d: double = 1.5;
+let f: float  = 2.5f;
 
 print(s);
 print(u);

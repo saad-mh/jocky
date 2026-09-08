@@ -4,21 +4,21 @@
 // L0.5: `as` conversions emit sext / zext / trunc / sitofp / uitofp / fptosi /
 //       fptoui / fpext / fptrunc.
 
-func prims(i: int, c: char, b: bool, d: double, f: float) -> int {
+func prims(i: int, c: char, b: flag, d: double, f: float) -> int {
     return i;
 }
 
-func s_widen(x: i16) -> i64 { return x as i64; }
-func u_widen(x: u16) -> u64 { return x as u64; }
-func i_narrow(x: i64) -> i8 { return x as i8; }
-func s_to_fp(x: i64) -> double { return x as double; }
-func u_to_fp(x: u64) -> double { return x as double; }
-func fp_to_s(x: double) -> i64 { return x as i64; }
-func fp_to_u(x: double) -> u64 { return x as u64; }
-func fp_widen(x: float) -> double { return x as double; }
-func fp_narrow(x: double) -> float { return x as float; }
+func s_widen(x: i16) -> i64 { return x to i64; }
+func u_widen(x: u16) -> u64 { return x to u64; }
+func i_narrow(x: i64) -> i8 { return x to i8; }
+func s_to_fp(x: i64) -> double { return x to double; }
+func u_to_fp(x: u64) -> double { return x to double; }
+func fp_to_s(x: double) -> i64 { return x to i64; }
+func fp_to_u(x: double) -> u64 { return x to u64; }
+func fp_widen(x: float) -> double { return x to double; }
+func fp_narrow(x: double) -> float { return x to float; }
 
-print(prims(0, 'a', true, 0.0, 0.0f));
+print(prims(0, 'a', yes, 0.0, 0.0f));
 
 // CHECK: define i64 @prims(i64 %i, i8 %c, i1 %b, double %d, float %f)
 

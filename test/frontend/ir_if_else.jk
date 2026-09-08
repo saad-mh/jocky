@@ -1,9 +1,9 @@
 // RUN: %jocky build --emit-llvm "%s" | %FileCheck "%s"
 
 func max(a: int, b: int) -> int {
-    if (a < b) {
+    check (a < b) {
         return b;
-    } else {
+    } otherwise {
         return a;
     }
 }

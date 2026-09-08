@@ -4,11 +4,11 @@
 // codegen. A well-formed program produces no diagnostics and exits 0.
 
 func add(a: int, b: int) -> int {
-    var total = a + b;
+    let total = a + b;
     return total;
 }
 
-func is_negative(n: int) -> bool {
+func is_negative(n: int) -> flag {
     return n < 0;
 }
 
@@ -16,15 +16,15 @@ func scale(x: double, k: double) -> double {
     return x * k;
 }
 
-var x = add(2, 40);
+let x = add(2, 40);
 while (x > 0) {
     x = x - 1;
 }
 
-var flag = is_negative(x);
-var ratio = scale(1.5, 2.0);
-var byte: u8 = 255;
-var wide = byte as int;
+let flag = is_negative(x);
+let ratio = scale(1.5, 2.0);
+let byte: u8 = 255;
+let wide = byte to int;
 
 print(flag);
 print(ratio);

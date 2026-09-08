@@ -9,7 +9,7 @@ link "ntdll";
 
 extern "C" RtlGetCurrentPeb() -> rawptr;
 
-var peb = RtlGetCurrentPeb();
-if (peb == null) { print(0); } else { print(1); }   // 1
+let peb = RtlGetCurrentPeb();
+check (peb == none) { print(0); } otherwise { print(1); }   // 1
 
 // CHECK: 1

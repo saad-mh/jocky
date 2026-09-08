@@ -4,10 +4,10 @@
 // type (` :int`, ` :bool`, ...). A comparison is `bool`.
 
 func f(a: int, b: int) -> int {
-    var x = a + b * 2;
-    if (x < 10) {
+    let x = a + b * 2;
+    check (x < 10) {
         x = -x;
-    } else {
+    } otherwise {
         while (x > 0) {
             x = x - 1;
         }
@@ -29,8 +29,8 @@ print(f(3, 4));
 // CHECK-NEXT:           )
 // CHECK-NEXT:         )
 // CHECK-NEXT:       )
-// CHECK-NEXT:       (if
-// CHECK-NEXT:         (binary Lt :bool
+// CHECK-NEXT:       (check
+// CHECK-NEXT:         (binary Lt :flag
 // CHECK-NEXT:           (varref x :int)
 // CHECK-NEXT:           (intlit 10 :int)
 // CHECK-NEXT:         )
@@ -44,7 +44,7 @@ print(f(3, 4));
 // CHECK-NEXT:         )
 // CHECK-NEXT:         (block
 // CHECK-NEXT:           (while
-// CHECK-NEXT:             (binary Gt :bool
+// CHECK-NEXT:             (binary Gt :flag
 // CHECK-NEXT:               (varref x :int)
 // CHECK-NEXT:               (intlit 0 :int)
 // CHECK-NEXT:             )

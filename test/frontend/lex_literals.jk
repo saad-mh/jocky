@@ -4,18 +4,18 @@
 // (with and without an `f` suffix), character literals, and the `true` /
 // `false` / `as` keywords, plus the `:` and `->` punctuation.
 
-var hex   = 0xDEAD;
-var sized = 42u32;
-var small = 7i8;
-var real  = 3.5;
-var frac  = .5e-3f;
-var sci   = 1e10;
-var ch    = '\n';
-var yes   = true;
-var no    = false;
+let hex   = 0xDEAD;
+let sized = 42u32;
+let small = 7i8;
+let real  = 3.5;
+let frac  = .5e-3f;
+let sci   = 1e10;
+let ch    = '\n';
+let yes   = yes;
+let no    = no;
 
-func f(p: int) -> bool {
-    return (p as u8) as bool;
+func f(p: int) -> flag {
+    return (p to u8) to flag;
 }
 
 // CHECK:      7:13: IntLiteral '0xDEAD' int=57005
@@ -25,10 +25,10 @@ func f(p: int) -> bool {
 // CHECK:      11:13: FloatLiteral '.5e-3f' float={{[0-9.e+-]+}} f32
 // CHECK:      12:13: FloatLiteral '1e10' float={{[0-9.e+-]+}}
 // CHECK:      13:13: CharLiteral {{.*}} char=10
-// CHECK:      14:13: KwTrue 'true'
-// CHECK:      15:13: KwFalse 'false'
+// CHECK:      14:13: KwYes 'yes'
+// CHECK:      15:13: KwNo 'no'
 // CHECK:      17:1: KwFunc 'func'
 // CHECK:      17:8: Identifier 'p'
 // CHECK-NEXT: 17:9: Colon ':'
 // CHECK:      17:16: Arrow '->'
-// CHECK:      18:15: KwAs 'as'
+// CHECK:      18:15: KwTo 'to'

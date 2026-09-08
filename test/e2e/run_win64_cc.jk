@@ -9,19 +9,19 @@
 extern "C" MultiByteToWideChar(cp: u32, flags: u32, src: ptr<char>,
                                srcLen: i32, dst: rawptr, dstLen: i32) -> i32;
 
-var s = "abcd";                       // 4 chars + NUL
+let s = "abcd";                       // 4 chars + NUL
 
 // dstLen 0 -> return the required wide-char count including the NUL.
-var need = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32, null, 0i32);
+let need = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32, none, 0i32);
 print(need);                          // 5
 
-var wbuf: u16[8];
-var got = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32,
-                              &wbuf[0] as rawptr, 8i32);
+let wbuf: u16[8];
+let got = MultiByteToWideChar(65001u32, 0u32, &s[0], -1i32,
+                              &wbuf[0] to rawptr, 8i32);
 print(got);                           // 5
-print(wbuf[0] as int);                // 97  ('a')
-print(wbuf[3] as int);                // 100 ('d')
-print(wbuf[4] as int);                // 0   (NUL)
+print(wbuf[0] to int);                // 97  ('a')
+print(wbuf[3] to int);                // 100 ('d')
+print(wbuf[4] to int);                // 0   (NUL)
 
 // CHECK:      5
 // CHECK-NEXT: 5

@@ -3,8 +3,8 @@
 // The parser recovers after each error and keeps going, so one run reports
 // several distinct problems and then stops (it does not loop).
 
-var x = 1 +;
-var y = (2 * 3;
+let x = 1 +;
+let y = (2 * 3;
 func () { return 1; }
 print(x
 

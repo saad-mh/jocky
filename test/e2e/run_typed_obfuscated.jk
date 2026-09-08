@@ -12,21 +12,21 @@
 // obfuscated as plain, and a fixed --obf-seed is reproducible.
 
 func mean(xs: double[]) -> double {
-    var total = 0.0;
-    var i = 0;
+    let total = 0.0;
+    let i = 0;
     while (i < xs.len) {
         total = total + xs[i];
         i = i + 1;
     }
-    return total / (xs.len as double);
+    return total / (xs.len to double);
 }
 
 func count_upper(s: char[]) -> int {
-    var n = 0;
-    var i = 0;
+    let n = 0;
+    let i = 0;
     while (i < s.len) {
-        if (s[i] >= 'A') {
-            if (s[i] <= 'Z') {
+        check (s[i] >= 'A') {
+            check (s[i] <= 'Z') {
                 n = n + 1;
             }
         }
@@ -35,11 +35,11 @@ func count_upper(s: char[]) -> int {
     return n;
 }
 
-var data: double[4] = [2.0, 4.0, 6.0, 8.0];
+let data: double[4] = [2.0, 4.0, 6.0, 8.0];
 print(mean(data[0:4]));       // 5
 print(mean(data[1:3]));       // 5
 
-var label = "AbCdEfG";
+let label = "AbCdEfG";
 print(count_upper(label));    // 4
 print(label);                 // AbCdEfG
 

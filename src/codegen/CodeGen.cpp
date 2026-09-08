@@ -882,9 +882,9 @@ llvm::Value *CodeGen::lowerPrint(const ast::Expr &arg) {
     if (!v) return nullptr;
 
     if (t.isBool()) {
-        llvm::Value *sel = builder_.CreateSelect(v, internCString("true"),
-                                                 internCString("false"),
-                                                 "boolstr");
+        llvm::Value *sel = builder_.CreateSelect(v, internCString("yes"),
+                                                 internCString("no"),
+                                                 "flagstr");
         call(internFormat("%s\n", "jocky.fmt.str"), sel);
     } else if (t.isFloat()) {
         llvm::Value *d =

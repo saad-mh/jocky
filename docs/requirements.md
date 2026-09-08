@@ -50,19 +50,19 @@ running alongside from `L0` on.
 
 JOCKY v0 has one value type (`i64`). Everything below replaces that with a
 small static type system. This is the detour requested before the FFI work:
-the forensic code is unpleasant to write without `char` buffers, `bool`
+the forensic code is unpleasant to write without `char` buffers, `flag`
 predicates, and `double` for entropy, and the FFI layer cannot describe a C
 signature without distinct types at all.
 
 ### L0.1 - Primitive types (MUST)
 
-Add `int`, `char`, `bool`, `double`, `float` as built-in types.
+Add `int`, `char`, `flag`, `double`, `float` as built-in types.
 
 | type     | representation            | notes                                   |
 |----------|---------------------------|-----------------------------------------|
 | `int`    | signed 64-bit, wraps      | the default integer; every v0 program keeps its meaning |
 | `char`   | **unsigned 8-bit**        | also the byte type; `char[N]` is a byte buffer |
-| `bool`   | `i1` in registers, `i8` in memory | values `true` / `false`         |
+| `flag`   | `i1` in registers, `i8` in memory | values `yes` / `no`         |
 | `double` | IEEE-754 binary64         | earns its place via entropy math (`log2`) |
 | `float`  | IEEE-754 binary32         | included for completeness; not on the forensic critical path |
 
@@ -86,7 +86,7 @@ synonym for `i64`; `char` is a synonym for `u8`.
 address cannot be expressed in signed-`i64`-only terms; region sizes and
 addresses must compare unsigned.
 *Acceptance:* `u32 x = 4000000000; print(x);` prints `4000000000`, not a
-negative number; `(0 as u64) - 1` compares greater than `0`.
+negative number; `(0 to u64) - 1` compares greater than `0`.
 *Touches:* lexer, parser, `src/sema/`, `src/codegen/CodeGen.cpp`.
 
 ### L0.3 - Literals (MUST)
@@ -95,7 +95,7 @@ negative number; `(0 as u64) - 1` compares greater than `0`.
   literals default to `int` and must fit their inferred type.
 - Character literals: `'A'` (value 65, type `char`), with the existing string
   escapes (`'\n' '\t' '\r' '\\' '\'' '\0'`).
-- Boolean literals: `true`, `false`.
+- Boolean literals: `yes`, `no`.
 - Floating literals: `1.0`, `.5`, `3.14`, `1e10`, `2.5e-3` are `double`; a
   trailing `f` (`3.14f`) makes a `float`.
 - Hexadecimal integer literals: `0x1000`, `0xDEADBEEF` (needed everywhere in
@@ -110,12 +110,12 @@ the type.
 ### L0.4 - Static typing discipline (MUST)
 
 - Function parameters and the return type are annotated:
-  `func f(a: int, b: char) -> bool { ... }`. A function with no result is
-  `-> void` (new).
+  `func f(a: int, b: char) -> flag { ... }`. A function with no result is
+  `-> nothing` (new).
 - Local variables infer their type from the initializer:
-  `var n = 0;` is `int`, `var ok = true;` is `bool`. An explicit annotation
+  `let n = 0;` is `int`, `let ok = yes;` is `flag`. An explicit annotation
   is allowed and then the initializer must be assignable to it:
-  `var addr: u64 = 0;`.
+  `let addr: u64 = 0;`.
 - The implicit `main` returns `int` (its value is the process exit code).
   Declaring `main` yourself remains an error.
 
@@ -123,7 +123,7 @@ the type.
 grammar (L2.1) fall out for free; inferred locals keep bodies as terse as v0.
 *Acceptance:* `sema` reports "parameter 'p' needs a type", "cannot infer type
 of 'x' from its initializer", and "returning `int` from a function declared
-`-> bool`" each at the right source location.
+`-> flag`" each at the right source location.
 *Touches:* `src/parser/`, new `src/sema/`, `include/jocky/ast/AST.h`
 (`Param` gains a type; `FunctionDecl` gains a return type; `VarDeclStmt`
 gains an optional annotation).
@@ -133,17 +133,17 @@ gains an optional annotation).
 - Implicit conversions are **widening only**: `char -> int`,
   any-narrower-int -> any-wider-int of the same signedness, `int -> double`,
   `float -> double`.
-- Everything else is explicit with `expr as T`: every narrowing, any
+- Everything else is explicit with `expr to T`: every narrowing, any
   signed/unsigned reinterpretation, `int <-> float`, `double -> float`,
-  anything `-> bool` or `-> char`, and (in Part 1's later milestones)
+  anything `-> flag` or `-> char`, and (in Part 1's later milestones)
   pointer/integer casts.
-- `bool` does not implicitly convert to a number. A bare integer expression
-  *in a condition position* (`if (n) { }`, `while (x) { }`) is shorthand for
+- `flag` does not implicitly convert to a number. A bare integer expression
+  *in a condition position* (`check (n) { }`, `while (x) { }`) is shorthand for
   `!= 0`; nowhere else.
-- Comparisons (`== != < <= > >=`) now produce `bool`, not `0`/`1`.
+- Comparisons (`== != < <= > >=`) now produce `flag`, not `0`/`1`.
 
 *Acceptance:* a table-driven `sema` test: each implicit pair compiles with no
-cast, each explicit pair is an error without `as` and compiles with it, and
+cast, each explicit pair is an error without `to` and compiles with it, and
 the emitted IR uses `sext`/`zext`/`trunc`/`sitofp`/`fptosi`/`fptrunc`/`fpext`
 as appropriate.
 *Touches:* `src/sema/`, `src/codegen/CodeGen.cpp`.
@@ -155,7 +155,7 @@ Two forms, both borrow-only for now:
 - **Fixed array `T[N]`** - storage, `N` a compile-time constant. `var buf:
   char[4096];` is one stack allocation of 4096 bytes. `arr[i]` indexes it
   (`i` is `int`; **no bounds check** - systems language, see L0.11).
-  Array literals: `var t: int[3] = [10, 20, 30];`.
+  Array literals: `let t: int[3] = [10, 20, 30];`.
 - **Slice `T[]`** - a borrowed view, represented as `{ base: ptr<T>, len:
   int }` (16 bytes). A `T[N]` decays to a `T[]` when passed to a parameter or
   assigned to a slice variable. `sub = arr[a:b]` makes a sub-slice.
@@ -179,7 +179,7 @@ A string literal is a `char[len + 1]`, NUL-terminated, and decays to
 `char[]` or (L1) `ptr<char>`. The v0 rule "a string literal may only be
 passed to `print`" is **removed**.
 
-*Acceptance:* `var msg = "hi";` gives a `char[3]`; `msg.len` is 3; `msg[2]`
+*Acceptance:* `let msg = "hi";` gives a `char[3]`; `msg.len` is 3; `msg[2]`
 is `0`; the bytes can be passed to a `char[]` parameter.
 *Touches:* `src/parser/`, `src/sema/`, `src/codegen/CodeGen.cpp`
 (`internCString` already does the interning; drop the placement check in
@@ -188,8 +188,8 @@ is `0`; the bytes can be passed to a `char[]` parameter.
 ### L0.8 - Type-directed `print` (MUST)
 
 `print` picks its format from the argument type: `int` -> `%lld`, unsigned ->
-`%llu`, `double`/`float` -> `%g`, `char` -> the character, `bool` ->
-`true`/`false`, `char[]`/`ptr<char>` -> the string. One argument still.
+`%llu`, `double`/`float` -> `%g`, `char` -> the character, `flag` ->
+`yes`/`no`, `char[]`/`ptr<char>` -> the string. One argument still.
 
 *Acceptance:* one `print` per type, golden stdout via FileCheck.
 *Touches:* `src/codegen/CodeGen.cpp` (`lowerCall`'s `print` arm,
@@ -219,7 +219,7 @@ gains a resolved-type annotation per expression.
 
 `docs/grammar.md` is updated in the same change as the code, per its own
 standing instruction. Tokens, the type grammar, annotated signatures,
-`as`, literals, arrays/slices, and the revised semantics all land there.
+`to`, literals, arrays/slices, and the revised semantics all land there.
 
 ### L0.11 - Optional bounds checking (LATER)
 
@@ -258,11 +258,11 @@ evaluate correctly; precedence test vs `+` and comparison.
 ### L1.2 - Pointer type (MUST)
 
 `ptr<T>` is a typed pointer; `rawptr` is an untyped byte pointer (C `void*`).
-`null` is the null pointer literal. Pointers compare with `==` / `!=` and,
+`none` is the null pointer literal. Pointers compare with `==` / `!=` and,
 for ordering within one region walk, unsigned `<` / `>`.
 
-*Acceptance:* `var p: ptr<int> = null; if (p == null) { }` compiles;
-`rawptr` and `ptr<T>` require `as` to convert between each other.
+*Acceptance:* `let p: ptr<int> = none; check (p == none) { }` compiles;
+`rawptr` and `ptr<T>` require `to` to convert between each other.
 *Touches:* ast/parser/sema/codegen; LLVM opaque `ptr` for all of them.
 
 ### L1.3 - Address-of and dereference (MUST)
@@ -271,7 +271,7 @@ for ordering within one region walk, unsigned `<` / `>`.
 `*p` reads through a pointer; `*p = v` writes. Prefix `*` is unambiguous
 (expression position) against the multiply operator.
 
-*Acceptance:* round-trip `var x = 7; var p = &x; *p = 9; print(x);` -> `9`;
+*Acceptance:* round-trip `let x = 7; let p = &x; *p = 9; print(x);` -> `9`;
 `&buf[16]` gives a pointer 16 bytes into a `char[]`.
 *Touches:* ast (`AddrOfExpr`, `DerefExpr`), parser, sema, codegen
 (`load`/`store` with the pointee type).
@@ -279,14 +279,14 @@ for ordering within one region walk, unsigned `<` / `>`.
 ### L1.4 - Pointer arithmetic and int<->ptr casts (MUST)
 
 `p + n` and `p - n` advance a `ptr<T>` by `n * sizeof(T)`; on `rawptr` the
-step is one byte. `p - q` (same type) is an element count. `addr as
-ptr<T>` and `p as u64` convert to and from an integer address.
+step is one byte. `p - q` (same type) is an element count. `addr to
+ptr<T>` and `p to u64` convert to and from an integer address.
 
 *Rationale:* the region walk advances a cursor by `base + size`; a struct is
 read by casting a buffer address to `ptr<S>`; a thread's start address
 arrives as a `u64` and must become a pointer to classify it.
-*Acceptance:* `(0x1000 as rawptr) + 0x40` equals `0x1040 as rawptr`;
-`(base as ptr<int>) + 2` equals `(base + 8) ...`.
+*Acceptance:* `(0x1000 to rawptr) + 0x40` equals `0x1040 to rawptr`;
+`(base to ptr<int>) + 2` equals `(base + 8) ...`.
 *Touches:* sema (scaling rule), codegen (`getelementptr`, `ptrtoint`,
 `inttoptr`).
 
@@ -301,7 +301,7 @@ field)` gives a field's byte offset. All compile-time constants.
 
 ### L1.6 - Struct overlay on bytes (MUST)
 
-Given a `char[]` or a `rawptr`, `p as ptr<S>` then field access reads a
+Given a `char[]` or a `rawptr`, `p to ptr<S>` then field access reads a
 C-layout struct straight out of the buffer, no copy. Writing through it is
 allowed but the forensic code only reads.
 
@@ -323,9 +323,9 @@ type).
 Declare an external C function with a full signature:
 
 ```
-extern "C" OpenProcess(access: u32, inheritHandle: bool, pid: u32) -> rawptr;
+extern "C" OpenProcess(access: u32, inheritHandle: flag, pid: u32) -> rawptr;
 extern "C" ReadProcessMemory(proc: rawptr, addr: rawptr, buf: rawptr,
-                             size: u64, out read: ptr<u64>) -> bool;
+                             size: u64, out read: ptr<u64>) -> flag;
 ```
 
 Codegen creates an `ExternalLinkage` `llvm::Function` with the mapped type
@@ -354,7 +354,7 @@ fills it.
 ### L2.3 - Win64 calling convention correctness (MUST)
 
 Integer/pointer args in `rcx rdx r8 r9` then stack; return in `rax`; structs
-larger than 8 bytes passed by hidden pointer; `bool` as a 4-byte `int` at the
+larger than 8 bytes passed by hidden pointer; `flag` as a 4-byte `int` at the
 ABI boundary; varargs pass-through for `printf`-shaped externs.
 
 *Acceptance:* a call into a tiny C test `.dll`/`.lib` with a 5-argument mixed
@@ -420,7 +420,7 @@ paths stay out of JOCKY. New tree: `runtime/jockyrt/`.
 ### R.1 - Flat ABI contract (MUST)
 
 No C `struct` crosses the boundary. Every `jkf_*` function takes only
-scalars (`int`, `u32`, `u64`, `bool`) and caller-owned byte buffers
+scalars (`int`, `u32`, `u64`, `flag`) and caller-owned byte buffers
 (`rawptr` + length). Records written into caller buffers are fixed-size,
 fixed-layout, documented in `runtime/jockyrt/abi.md`, and versioned by a
 leading `u32` version field. Return convention: `>= 0` is a count or a
@@ -444,8 +444,8 @@ right `ppid`.
 
 ### R.3 - Target open / close / privilege (MUST)
 
-`jkf_open(pid, want_write: bool) -> handle` (write always `false` in
-production), `jkf_close(handle)`, `jkf_enable_debug_privilege() -> bool`.
+`jkf_open(pid, want_write: flag) -> handle` (write always `no` in
+production), `jkf_close(handle)`, `jkf_enable_debug_privilege() -> flag`.
 `jkf_open` reports, via an out-param record, the access level actually
 granted so the scanner can note "queried headers only, could not read".
 
@@ -746,7 +746,7 @@ produce identical JSONL modulo the timestamp field.
 
 ### V.7 - Safety (MUST)
 
-The production build links `jkf_open` with `want_write = false` wired to a
+The production build links `jkf_open` with `want_write = no` wired to a
 compile-time constant; a build that could write target memory is a separate,
 test-only profile. No socket API is linked. All output stays under the
 caller's `--out` directory.

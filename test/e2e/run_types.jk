@@ -10,43 +10,43 @@ func avg(a: double, b: double) -> double {
     return (a + b) / 2.0;
 }
 
-func is_even(n: int) -> bool {
+func is_even(n: int) -> flag {
     return n % 2 == 0;
 }
 
-var i: int    = -5;
-var c: char   = 'K';
-var b: bool   = true;
-var d: double = 3.0;
-var f: float  = 1.5f;
+let i: int    = -5;
+let c: char   = 'K';
+let b: flag   = yes;
+let d: double = 3.0;
+let f: float  = 1.5f;
 
 print(i);              // -5
 print(c);              // K
-print(b);              // true
+print(b);              // yes
 print(d);              // 3
 print(f);              // 1.5
 
-var big: u32 = 4000000000;
+let big: u32 = 4000000000;
 print(big);            // 4000000000
 
-var wrap = (0 as u64) - 1;
+let wrap = (0 to u64) - 1;
 print(wrap);           // 18446744073709551615
 
 print(avg(1.0, 4.0));  // 2.5
-print(is_even(10));     // true
-print(is_even(i));      // false
+print(is_even(10));     // yes
+print(is_even(i));      // no
 
-var code = c as int;    // 'K' widened to its code point
+let code = c to int;    // 'K' widened to its code point
 print(code);            // 75
 
 // CHECK:      -5
 // CHECK-NEXT: K
-// CHECK-NEXT: true
+// CHECK-NEXT: yes
 // CHECK-NEXT: 3
 // CHECK-NEXT: 1.5
 // CHECK-NEXT: 4000000000
 // CHECK-NEXT: 18446744073709551615
 // CHECK-NEXT: 2.5
-// CHECK-NEXT: true
-// CHECK-NEXT: false
+// CHECK-NEXT: yes
+// CHECK-NEXT: no
 // CHECK-NEXT: 75

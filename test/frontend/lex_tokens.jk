@@ -1,11 +1,11 @@
 // RUN: %jocky lex --dump-tokens "%s" | %FileCheck "%s"
 
 func add(a, b) {
-  var total = a + b;
+  let total = a + b;
   return total;
 }
 
-if (add(2, 40) >= 42) {
+check (add(2, 40) >= 42) {
   print("hi\n");
 }
 
@@ -17,7 +17,7 @@ if (add(2, 40) >= 42) {
 // CHECK-NEXT: 3:13: Identifier 'b'
 // CHECK-NEXT: 3:14: RParen ')'
 // CHECK-NEXT: 3:16: LBrace '{'
-// CHECK-NEXT: 4:3: KwVar 'var'
+// CHECK-NEXT: 4:3: KwLet 'let'
 // CHECK-NEXT: 4:7: Identifier 'total'
 // CHECK-NEXT: 4:13: Assign '='
 // CHECK-NEXT: 4:15: Identifier 'a'
@@ -28,18 +28,18 @@ if (add(2, 40) >= 42) {
 // CHECK-NEXT: 5:10: Identifier 'total'
 // CHECK-NEXT: 5:15: Semicolon ';'
 // CHECK-NEXT: 6:1: RBrace '}'
-// CHECK-NEXT: 8:1: KwIf 'if'
-// CHECK-NEXT: 8:4: LParen '('
-// CHECK-NEXT: 8:5: Identifier 'add'
-// CHECK-NEXT: 8:8: LParen '('
-// CHECK-NEXT: 8:9: IntLiteral '2' int=2
-// CHECK-NEXT: 8:10: Comma ','
-// CHECK-NEXT: 8:12: IntLiteral '40' int=40
-// CHECK-NEXT: 8:14: RParen ')'
-// CHECK-NEXT: 8:16: GtEq '>='
-// CHECK-NEXT: 8:19: IntLiteral '42' int=42
-// CHECK-NEXT: 8:21: RParen ')'
-// CHECK-NEXT: 8:23: LBrace '{'
+// CHECK-NEXT: 8:1: KwCheck 'check'
+// CHECK-NEXT: 8:7: LParen '('
+// CHECK-NEXT: 8:8: Identifier 'add'
+// CHECK-NEXT: 8:11: LParen '('
+// CHECK-NEXT: 8:12: IntLiteral '2' int=2
+// CHECK-NEXT: 8:13: Comma ','
+// CHECK-NEXT: 8:15: IntLiteral '40' int=40
+// CHECK-NEXT: 8:17: RParen ')'
+// CHECK-NEXT: 8:19: GtEq '>='
+// CHECK-NEXT: 8:22: IntLiteral '42' int=42
+// CHECK-NEXT: 8:24: RParen ')'
+// CHECK-NEXT: 8:26: LBrace '{'
 // CHECK-NEXT: 9:3: Identifier 'print'
 // CHECK-NEXT: 9:8: LParen '('
 // CHECK-NEXT: 9:9: StringLiteral '"hi\n"' str="hi\n"
