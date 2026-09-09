@@ -152,11 +152,14 @@ def _import_compiler():
         return None
 
 
-def run_jit(script_path: str):
+def run_jit(script_path: str, obfuscate: bool = False):
     """JIT-execute a .jk file, capturing and displaying output."""
     try:
+        cmd = [sys.executable, str(COMPILER_DIR / "compiler.py"), str(script_path), "--run"]
+        if obfuscate:
+            cmd.append("--obfuscate-jit")
         result = subprocess.run(
-            [sys.executable, str(COMPILER_DIR / "compiler.py"), str(script_path), "--run"],
+            cmd,
             capture_output=True, text=True, cwd=str(COMPILER_DIR),
             env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
         )
@@ -380,21 +383,23 @@ def _script_action_menu(script_path: Path, name: str, desc: str = "",
 
         _divider()
         rprint("  [bold yellow]Actions[/bold yellow]")
-        _item(1, "Run Script (JIT execute)")
-        _item(2, "View Source Code")
+        _item(1, "Run  (JIT, clean)")
+        _item(2, "Run  (JIT + Obfuscation)",
+              "build-ID + entropy injected, SHA-256 changes every run")
+        _item(3, "View Source Code")
         if allow_edit:
-            _item(3, "Edit in Editor")
+            _item(4, "Edit in Editor")
+            _item(5, "Inspect  →  Tokens")
+            _item(6, "Inspect  →  AST")
+            _item(7, "Inspect  →  LLVM IR  (clean)")
+            _item(8, "Inspect  →  LLVM IR  (obfuscated)")
+            _item(9, "Pipeline Summary  (all stages)")
+        else:
             _item(4, "Inspect  →  Tokens")
             _item(5, "Inspect  →  AST")
-            _item(6, "Inspect  →  LLVM IR")
-            _item(7, "Inspect  →  Obfuscated IR")
+            _item(6, "Inspect  →  LLVM IR  (clean)")
+            _item(7, "Inspect  →  LLVM IR  (obfuscated)")
             _item(8, "Pipeline Summary  (all stages)")
-        else:
-            _item(3, "Inspect  →  Tokens")
-            _item(4, "Inspect  →  AST")
-            _item(5, "Inspect  →  LLVM IR")
-            _item(6, "Inspect  →  Obfuscated IR")
-            _item(7, "Pipeline Summary  (all stages)")
         _divider()
         _item(0, "Back")
 
@@ -403,23 +408,25 @@ def _script_action_menu(script_path: Path, name: str, desc: str = "",
         if choice == "0":
             return
         elif choice == "1":
-            _run_script(script_path)
+            _run_script(script_path, obfuscate=False)
         elif choice == "2":
+            _run_script(script_path, obfuscate=True)
+        elif choice == "3":
             _show_source(script_path)
-        elif allow_edit and choice == "3":
+        elif allow_edit and choice == "4":
             _open_editor(script_path)
         else:
-            # Remap indices depending on allow_edit
+            # offset=1 for allow_edit (Edit takes slot 4), offset=0 otherwise
             offset = 1 if allow_edit else 0
-            if choice == str(3 + offset):
+            if choice == str(4 + offset):
                 _show_tokens(script_path)
-            elif choice == str(4 + offset):
-                _show_ast(script_path)
             elif choice == str(5 + offset):
-                _show_ir(script_path, obfuscate=False)
+                _show_ast(script_path)
             elif choice == str(6 + offset):
-                _show_ir(script_path, obfuscate=True)
+                _show_ir(script_path, obfuscate=False)
             elif choice == str(7 + offset):
+                _show_ir(script_path, obfuscate=True)
+            elif choice == str(8 + offset):
                 source = script_path.read_text(encoding="utf-8")
                 _show_summary(script_path, source)
 
@@ -707,7 +714,7 @@ def menu_build():
             idx = int(choice) - 1
             if 0 <= idx < len(all_scripts):
                 name, path = all_scripts[idx]
-                _build_script(path)
+                _build_mode_menu(path)
             else:
                 rprint(f"[red]  Enter 1–{len(all_scripts)} or 0.[/red]")
                 pause()
@@ -716,14 +723,42 @@ def menu_build():
             pause()
 
 
-def _build_script(script_path: Path):
+def _build_mode_menu(script_path: Path):
+    """Ask for obfuscation mode then build."""
     clear()
-    print_section(f"Building — {script_path.name}")
+    print_header(f"Build: {script_path.name}", "Compile to standalone Windows .exe")
+
+    if RICH:
+        console.print(f"\n  [cyan]File:[/cyan] {script_path}")
+    _divider()
+    rprint("  [bold yellow]Build Mode[/bold yellow]")
+    _item(1, "Obfuscated  (recommended)",
+          "XOR-encrypted strings + polymorphic build-ID + entropy")
+    _item(2, "Debug  (no obfuscation)",
+          "readable IR, fixed SHA-256 — use for development")
+    _divider()
+    _item(0, "Back")
+
+    choice = ask("Build mode")
+    if choice == "1":
+        _build_script(script_path, obfuscate=True)
+    elif choice == "2":
+        _build_script(script_path, obfuscate=False)
+
+
+def _build_script(script_path: Path, obfuscate: bool = True):
+    mode_label = "Obfuscated" if obfuscate else "Debug (no obfuscation)"
+    clear()
+    print_section(f"Building — {script_path.name}  [{mode_label}]")
     rprint(f"\n  [dim]Output directory: {OUTPUT_DIR}[/dim]")
 
+    cmd = [sys.executable, str(COMPILER_DIR / "compiler.py"),
+           str(script_path), "-o", str(OUTPUT_DIR)]
+    if not obfuscate:
+        cmd.append("--no-obfuscate")
+
     result = subprocess.run(
-        [sys.executable, str(COMPILER_DIR / "compiler.py"),
-         str(script_path), "-o", str(OUTPUT_DIR)],
+        cmd,
         capture_output=True, text=True, cwd=str(COMPILER_DIR),
         env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
     )
@@ -732,9 +767,10 @@ def _build_script(script_path: Path):
     if RICH:
         console.print()
         style = "green" if result.returncode == 0 else "red"
+        obf_tag = " [yellow](obfuscated)[/yellow]" if obfuscate else " [dim](debug)[/dim]"
         console.print(Panel(output.strip() or "(no output)",
                             border_style=style,
-                            title=f"[{style}]Build Output[/{style}]"))
+                            title=f"[{style}]Build Output[/{style}]{obf_tag}"))
     else:
         print("\n" + "─" * 62)
         print(output)
@@ -907,21 +943,32 @@ def _show_summary(script_path: Path, source: str):
     pause()
 
 
-def _run_script(script_path: Path):
+def _run_script(script_path: Path, obfuscate: bool = False):
     clear()
-    print_section(f"Running — {script_path.name}")
+    mode_label = "JIT + Obfuscation  (structural)" if obfuscate else "JIT  (clean)"
+    print_section(f"Running — {script_path.name}  [{mode_label}]")
+
+    if obfuscate:
+        rprint("\n  [dim]Applying structural obfuscation: build-ID + entropy injected.[/dim]")
+        rprint("  [dim]Note: string XOR requires native build (--no-obfuscate is JIT-only limitation).[/dim]")
+
     rprint("\n  [dim]Compiling and executing via LLVM JIT...[/dim]")
 
-    output, rc = run_jit(str(script_path))
+    output, rc = run_jit(str(script_path), obfuscate=obfuscate)
 
     if RICH:
         console.print()
         style = "green" if rc == 0 else "red"
-        title = f"[{style}]Output[/{style}]"
+        obf_tag = " [yellow](obfuscated build)[/yellow]" if obfuscate else ""
+        title = f"[{style}]Output[/{style}]{obf_tag}"
         console.print(Panel(output.strip() or "(no output)",
                             border_style=style, title=title))
         if rc == 0:
-            console.print("  [green]Execution complete.[/green]")
+            if obfuscate:
+                console.print("  [green]Execution complete.[/green]  "
+                              "[yellow]Polymorphic build-ID injected — IR hash differs from clean run.[/yellow]")
+            else:
+                console.print("  [green]Execution complete.[/green]")
         else:
             console.print(f"  [red]Exit code: {rc}[/red]")
     else:
@@ -929,6 +976,8 @@ def _run_script(script_path: Path):
         print(output)
         print("─" * 62)
         print(f"Exit code: {rc}")
+        if obfuscate:
+            print("  (obfuscated run — polymorphic build-ID injected)")
     pause()
 
 

@@ -61,11 +61,12 @@ from jocky.stdlib   import register_all
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compile_jocky(
-    source_path:  str,
-    output_dir:   str  = 'output',
-    emit_ir:      bool = False,
-    run_jit:      bool = False,
-    obfuscate:    bool = True,
+    source_path:    str,
+    output_dir:     str  = 'output',
+    emit_ir:        bool = False,
+    run_jit:        bool = False,
+    obfuscate:      bool = True,
+    obfuscate_jit:  bool = False,
 ) -> bool:
     """Run the full JOCKY compilation pipeline. Returns True on success."""
 
@@ -126,15 +127,21 @@ def compile_jocky(
         return False
     print("      OK — IR module built")
 
-    # ── Stage 5: Obfuscation (binary mode only) ───────────────────────────────
+    # ── Stage 5: Obfuscation ─────────────────────────────────────────────────
     if obfuscate and not run_jit:
-        print("\n[5/5] Obfuscation passes...")
-        # encrypt_strings=True: strings are XOR-encrypted; jk_xordecrypt() in
-        # forensics.c decrypts at runtime using _jocky_xor_key from the module.
+        print("\n[5/5] Obfuscation passes (native mode)...")
+        # XOR-encrypt string globals; jk_xordecrypt() in forensics.c decrypts
+        # them at runtime. Also injects polymorphic build-ID + entropy globals.
         ir_module = ObfuscationPasses(ir_module, encrypt_strings=True).run_all()
-        print("      OK — polymorphic build-ID + string XOR encryption + entropy noise")
+        print("      OK — build-ID + string XOR + entropy  (different SHA-256 every compile)")
+    elif run_jit and obfuscate_jit:
+        print("\n[5/5] Obfuscation passes (JIT mode — structural only)...")
+        # String XOR requires jk_xordecrypt() from forensics.c which is not
+        # available as a JIT Python callback.  Inject build-ID + entropy only.
+        ir_module = ObfuscationPasses(ir_module, encrypt_strings=False).run_all()
+        print("      OK — polymorphic build-ID + entropy injected  (strings NOT XOR'd in JIT mode)")
     elif run_jit:
-        print("\n[5/5] Obfuscation — skipped (JIT mode)")
+        print("\n[5/5] Obfuscation — skipped  (pass --obfuscate-jit to enable structural passes)")
     else:
         print("\n[5/5] Obfuscation — SKIPPED (--no-obfuscate)")
 
@@ -314,15 +321,19 @@ def main() -> None:
     ap.add_argument('--run',            action='store_true',
                     help='JIT-execute immediately (no linker needed)')
     ap.add_argument('--no-obfuscate',   action='store_true',
-                    help='Skip obfuscation passes (for debugging)')
+                    help='Skip obfuscation passes for native builds (debug)')
+    ap.add_argument('--obfuscate-jit',  action='store_true',
+                    help='Apply structural obfuscation in JIT mode '
+                         '(build-ID + entropy injection; strings NOT XOR-encrypted in JIT mode)')
 
     args = ap.parse_args()
     ok   = compile_jocky(
-        source_path = args.source,
-        output_dir  = args.output,
-        emit_ir     = args.emit_ir,
-        run_jit     = args.run,
-        obfuscate   = not args.no_obfuscate,
+        source_path   = args.source,
+        output_dir    = args.output,
+        emit_ir       = args.emit_ir,
+        run_jit       = args.run,
+        obfuscate     = not args.no_obfuscate,
+        obfuscate_jit = args.obfuscate_jit,
     )
     sys.exit(0 if ok else 1)
 

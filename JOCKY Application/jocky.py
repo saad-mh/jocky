@@ -4,8 +4,10 @@ jocky.py — JOCKY Language CLI Wrapper
 
 Usage:
     python jocky.py                          Open the interactive TUI
-    python jocky.py run    <file.jk>         JIT-execute a script
-    python jocky.py build  <file.jk>         Compile to native .exe
+    python jocky.py run    <file.jk>              JIT-execute a script
+    python jocky.py run    <file.jk> --obfuscate  JIT-execute with obfuscation passes
+    python jocky.py build  <file.jk>              Compile to native .exe (obfuscated)
+    python jocky.py build  <file.jk> --no-obfuscate  Compile without obfuscation (debug)
     python jocky.py ir     <file.jk>         Print LLVM IR (no obfuscation)
     python jocky.py ir-obf <file.jk>         Print LLVM IR (obfuscated)
     python jocky.py tokens <file.jk>         Print token list
@@ -61,8 +63,10 @@ def usage():
     banner()
     print(f"""
 {BOLD("Commands:")}
-  {CYAN("run")}     <file.jk>      JIT-execute (no linker needed)
-  {CYAN("build")}   <file.jk>      Compile to native .exe
+  {CYAN("run")}     <file.jk>                  JIT-execute (no linker needed)
+  {CYAN("run")}     <file.jk> --obfuscate       JIT + structural obfuscation
+  {CYAN("build")}   <file.jk>                  Compile to native .exe (obfuscated)
+  {CYAN("build")}   <file.jk> --no-obfuscate   Compile without obfuscation (debug)
   {CYAN("ir")}      <file.jk>      Show LLVM IR (clean)
   {CYAN("ir-obf")}  <file.jk>      Show LLVM IR (obfuscated)
   {CYAN("tokens")}  <file.jk>      Show lexer tokens
@@ -120,16 +124,17 @@ def _resolve(file_arg: str) -> Path:
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
-def cmd_run(file_arg: str):
+def cmd_run(file_arg: str, obfuscate: bool = False):
     """JIT-execute a .jk file via the compiler subprocess."""
     path = _resolve(file_arg)
     banner()
-    print(f"  {DIM('Mode:')} JIT execution")
+    obf_label = "JIT + obfuscation (structural)" if obfuscate else "JIT"
+    print(f"  {DIM('Mode:')} {obf_label}")
     print(f"  {DIM('File:')} {path}\n")
-    result = subprocess.run(
-        [sys.executable, str(COMPILER_DIR / "compiler.py"), str(path), "--run"],
-        cwd=str(COMPILER_DIR)
-    )
+    cmd_args = [sys.executable, str(COMPILER_DIR / "compiler.py"), str(path), "--run"]
+    if obfuscate:
+        cmd_args.append("--obfuscate-jit")
+    result = subprocess.run(cmd_args, cwd=str(COMPILER_DIR))
     sys.exit(result.returncode)
 
 
@@ -417,9 +422,9 @@ def main():
 
     elif cmd == "run":
         if len(args) < 2:
-            print(RED("Usage: jocky run <file.jk>"))
+            print(RED("Usage: jocky run <file.jk> [--obfuscate]"))
             sys.exit(1)
-        cmd_run(args[1])
+        cmd_run(args[1], obfuscate="--obfuscate" in args)
 
     elif cmd == "build":
         if len(args) < 2:
@@ -465,8 +470,8 @@ def main():
         cmd_inspect(args[1])
 
     elif cmd.endswith(".jk"):
-        # Shorthand: jocky script.jk → run it
-        cmd_run(args[0])
+        # Shorthand: jocky script.jk → run it  (jocky script.jk --obfuscate also works)
+        cmd_run(args[0], obfuscate="--obfuscate" in args)
 
     else:
         print(RED(f"Unknown command: {cmd}"))
