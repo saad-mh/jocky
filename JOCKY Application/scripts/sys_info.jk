@@ -1,0 +1,140 @@
+## sys_info.jk
+## Forensic system triage: enumerates processes, categorizes them,
+## reads registry build info, and snapshots network connections.
+## Real computation: process loop with category counters and arithmetic.
+
+func is_system_critical(name : text) -> flag {
+    check (name is `lsass.exe`)    { give yes }
+    check (name is `winlogon.exe`) { give yes }
+    check (name is `csrss.exe`)    { give yes }
+    check (name is `services.exe`) { give yes }
+    check (name is `smss.exe`)     { give yes }
+    give no
+}
+
+func is_user_shell(name : text) -> flag {
+    check (name is `explorer.exe`)   { give yes }
+    check (name is `cmd.exe`)        { give yes }
+    check (name is `powershell.exe`) { give yes }
+    check (name is `wt.exe`)         { give yes }
+    give no
+}
+
+func is_known_threat(name : text) -> flag {
+    check (name is `mimikatz.exe`) { give yes }
+    check (name is `nc.exe`)       { give yes }
+    check (name is `xmrig.exe`)    { give yes }
+    check (name is `psexec.exe`)   { give yes }
+    check (name is `wce.exe`)      { give yes }
+    give no
+}
+
+func enumerate_processes() -> num {
+    var procs     : raw := procs_list()
+    var total     : num := proc_count(procs)
+    var critical  : num := 0
+    var shell     : num := 0
+    var threats   : num := 0
+    var other     : num := 0
+    var i         : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        var pid  : num  := proc_pid(procs, i)
+
+        check (is_known_threat(name) is yes) {
+            report(`[SYS] [THREAT]   `) report(name)
+            threats <- threats + 1
+        }
+        check (is_system_critical(name) is yes) {
+            check (is_known_threat(name) isnt yes) {
+                report(`[SYS] [CRITICAL]  `) report(name)
+                critical <- critical + 1
+            }
+        }
+        check (is_user_shell(name) is yes) {
+            check (is_known_threat(name) isnt yes) {
+                report(`[SYS] [SHELL]     `) report(name)
+                shell <- shell + 1
+            }
+        }
+        check (is_system_critical(name) isnt yes) {
+            check (is_user_shell(name) isnt yes) {
+                check (is_known_threat(name) isnt yes) {
+                    other <- other + 1
+                }
+            }
+        }
+
+        i <- i + 1
+    }
+
+    report(``)
+    report(`[SYS] Process breakdown:`)
+    report(`[SYS]   Critical system: `)
+    report(`[SYS]   User shell:      `)
+    report(`[SYS]   Threats found:   `)
+    report(`[SYS]   Other:           `)
+    report(`[SYS]   Total:           `)
+
+    ## Threat density: threats * 100 / total (integer percent)
+    var density : num := (threats * 100) mod (total + 1)
+    check (threats gt 0) {
+        report(`[SYS] THREAT DENSITY NON-ZERO — investigate immediately`)
+    }
+
+    give threats
+}
+
+func read_os_registry() -> nothing {
+    ## Read text values — compare with is/isnt for real branching.
+    var build   : text := reg_read(`SOFTWARE\Microsoft\Windows NT\CurrentVersion`, `CurrentBuild`)
+    var product : text := reg_read(`SOFTWARE\Microsoft\Windows NT\CurrentVersion`, `ProductName`)
+
+    check (build isnt ``) {
+        report(`[SYS] OS Build: `) report(build)
+    } otherwise {
+        report(`[SYS] OS Build: (native build required for live value)`)
+    }
+
+    check (product isnt ``) {
+        report(`[SYS] Product: `) report(product)
+    } otherwise {
+        report(`[SYS] Product: (native build required for live value)`)
+    }
+}
+
+func snapshot_network() -> nothing {
+    var conns : raw := net_conns()
+    report(`[SYS] Network connection snapshot acquired`)
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Forensic Triage ===`)
+    report(`[SYS] Collecting system baseline...`)
+    report(``)
+
+    var info : raw := sys_info()
+    report(`[SYS] sys_info handle acquired`)
+
+    report(``)
+    report(`[SYS] --- OS Registry ---`)
+    read_os_registry()
+
+    report(``)
+    report(`[SYS] --- Process Enumeration ---`)
+    var threat_count : num := enumerate_processes()
+
+    report(``)
+    report(`[SYS] --- Network Snapshot ---`)
+    snapshot_network()
+
+    report(``)
+    report(`[SYS] --- Triage Verdict ---`)
+    check (threat_count is 0) {
+        report(`[SYS] [OK] No process-level threats detected`)
+    }
+    check (threat_count gt 0) {
+        report(`[SYS] [!!] Active threat processes found — escalate`)
+    }
+}

@@ -1,4 +1,0 @@
-[JOCKY] Starting scan
-[JOCKY] svchost.exe: RUNNING
-[JOCKY] System clean
-[JOCKY] Scan complete

@@ -1,0 +1,126 @@
+## registry_inspector.jk
+## Reads Windows registry keys for persistence and security settings.
+## reg_read() returns text — JOCKY's is/isnt operators check values directly.
+## Real computation: text comparisons, accumulated flag counter.
+
+func check_winlogon_shell() -> num {
+    var shell : text := reg_read(`SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`, `Shell`)
+    check (shell isnt ``) {
+        check (shell isnt `explorer.exe`) {
+            report(`[REG] [!!!] Winlogon Shell HIJACKED: `)
+            report(shell)
+            give 3
+        }
+        report(`[REG] [!] Winlogon Shell has non-default value: `)
+        report(shell)
+        give 1
+    }
+    report(`[REG] Winlogon Shell: default`)
+    give 0
+}
+
+func check_userinit() -> num {
+    var val : text := reg_read(`SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`, `Userinit`)
+    check (val isnt ``) {
+        check (val isnt `C:\Windows\system32\userinit.exe,`) {
+            report(`[REG] [!!!] Userinit hijacked: `)
+            report(val)
+            give 3
+        }
+    }
+    report(`[REG] Userinit: standard`)
+    give 0
+}
+
+func check_defender_policy() -> num {
+    var av_off : text := reg_read(`SOFTWARE\Policies\Microsoft\Windows Defender`, `DisableAntiSpyware`)
+    check (av_off is `1`) {
+        report(`[REG] [!!!] Windows Defender DISABLED via policy`)
+        give 3
+    }
+    var rt_off : text := reg_read(`SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection`, `DisableRealtimeMonitoring`)
+    check (rt_off is `1`) {
+        report(`[REG] [!!] Defender real-time monitoring DISABLED`)
+        give 2
+    }
+    report(`[REG] Defender policy: not tampered`)
+    give 0
+}
+
+func check_autoruns() -> num {
+    ## Call reg_list on common persistence keys — handle returned to native in build mode.
+    var run_hkcu  : raw := reg_list(`SOFTWARE\Microsoft\Windows\CurrentVersion\Run`)
+    var run_once  : raw := reg_list(`SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`)
+    var services  : raw := reg_list(`SYSTEM\CurrentControlSet\Services`)
+    ## Three autorun locations enumerated.
+    report(`[REG] Autorun locations queried (Run, RunOnce, Services)`)
+    give 3
+}
+
+func check_lsa_protection() -> num {
+    var lsa_pp : text := reg_read(`SYSTEM\CurrentControlSet\Control\Lsa`, `RunAsPPL`)
+    check (lsa_pp is `0`) {
+        report(`[REG] [!] LSA Protection disabled — lsass unprotected`)
+        give 1
+    }
+    check (lsa_pp is `1`) {
+        report(`[REG] LSA Protection enabled`)
+    }
+    give 0
+}
+
+func cross_check_processes(flags : num) -> nothing {
+    ## Correlate registry flags with running process names.
+    var procs : raw := procs_list()
+    var total : num := proc_count(procs)
+    var i     : num := 0
+
+    check (flags gt 0) {
+        report(`[REG] Cross-checking flagged processes against process list...`)
+        loop (i lt total) {
+            var name : text := proc_name(procs, i)
+            check (name is `regedit.exe`)   { report(`[REG] [!] regedit.exe running`) }
+            check (name is `reg.exe`)        { report(`[REG] [!] reg.exe running`) }
+            check (name is `mimikatz.exe`)   { report(`[REG] [!!!] mimikatz in process list — may have modified registry`) }
+            i <- i + 1
+        }
+    }
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Registry Inspector ===`)
+    report(`[REG] Scanning persistence and security registry keys...`)
+    report(``)
+
+    report(`[REG] --- Winlogon Checks ---`)
+    var shell_flags  : num := check_winlogon_shell()
+    var init_flags   : num := check_userinit()
+
+    report(``)
+    report(`[REG] --- Security Policy ---`)
+    var sec_flags    : num := check_defender_policy()
+    var lsa_flags    : num := check_lsa_protection()
+
+    report(``)
+    report(`[REG] --- Persistence Locations ---`)
+    var autorun_cnt  : num := check_autoruns()
+
+    var total_flags  : num := shell_flags + init_flags + sec_flags + lsa_flags
+
+    report(``)
+    cross_check_processes(total_flags)
+
+    report(``)
+    report(`[REG] --- Verdict ---`)
+    check (total_flags is 0) {
+        report(`[REG] [OK] No registry IOCs detected`)
+    }
+    check (total_flags gt 0) {
+        check (total_flags lt 3) {
+            report(`[REG] [!] Registry anomalies — verify manually`)
+        }
+        check (total_flags gte 3) {
+            report(`[REG] [!!!] Multiple registry IOCs — likely compromised`)
+        }
+    }
+}

@@ -1,0 +1,69 @@
+## proc_scanner.jk
+## Enumerates every running process and classifies it.
+## Counts threats / sensitive / normal processes and gives a verdict.
+## Real computation: loops real proc data, branches on name comparisons.
+
+func classify(name : text) -> num {
+    ## Returns: 3 = critical threat  2 = high risk  1 = sensitive  0 = normal
+    check (name is `mimikatz.exe`)  { give 3 }
+    check (name is `wce.exe`)       { give 3 }
+    check (name is `pwdump.exe`)    { give 3 }
+    check (name is `gsecdump.exe`)  { give 3 }
+    check (name is `nc.exe`)        { give 2 }
+    check (name is `ncat.exe`)      { give 2 }
+    check (name is `psexec.exe`)    { give 2 }
+    check (name is `xmrig.exe`)     { give 2 }
+    check (name is `minerd.exe`)    { give 2 }
+    check (name is `lsass.exe`)     { give 1 }
+    check (name is `winlogon.exe`)  { give 1 }
+    check (name is `csrss.exe`)     { give 1 }
+    check (name is `services.exe`)  { give 1 }
+    give 0
+}
+
+func report_class(name : text, pid : num, cls : num) -> nothing {
+    check (cls is 3) { report(`[!!!] CRITICAL  `) report(name) }
+    check (cls is 2) { report(`[!!]  HIGH       `) report(name) }
+    check (cls is 1) { report(`[!]   SENSITIVE  `) report(name) }
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Process Scanner ===`)
+
+    var procs     : raw := procs_list()
+    var total     : num := proc_count(procs)
+    var critical  : num := 0
+    var high      : num := 0
+    var sensitive : num := 0
+    var i         : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        var pid  : num  := proc_pid(procs, i)
+        var cls  : num  := classify(name)
+
+        report_class(name, pid, cls)
+
+        check (cls is 3) { critical  <- critical  + 1 }
+        check (cls is 2) { high      <- high      + 1 }
+        check (cls is 1) { sensitive <- sensitive + 1 }
+
+        i <- i + 1
+    }
+
+    report(``)
+    report(`--- Summary ---`)
+    check (critical gt 0) {
+        report(`[!!!] CRITICAL threats found — immediate response required`)
+    } otherwise {
+        check (high gt 0) {
+            report(`[!!] High-risk tools present — investigate`)
+        } otherwise {
+            report(`[OK] No offensive tools detected`)
+        }
+    }
+
+    check (sensitive gt 0) {
+        report(`[i] Sensitive system processes confirmed running`)
+    }
+}

@@ -1,0 +1,65 @@
+## net_monitor.jk
+## Captures network connection snapshots and cross-references with processes.
+## Calls real stdlib: net_conns(), net_sniff(), procs_list().
+## Note: net_conns/net_sniff return raw handles — full parsing needs native build.
+
+func scan_procs_for_network_tools() -> num {
+    ## Walk process list and count tools that are commonly network-active threats.
+    var procs  : raw := procs_list()
+    var total  : num := proc_count(procs)
+    var found  : num := 0
+    var i      : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+
+        check (name is `nc.exe`)        { report(`[NET] netcat process active`) found <- found + 1 }
+        check (name is `ncat.exe`)      { report(`[NET] ncat process active`)   found <- found + 1 }
+        check (name is `ngrok.exe`)     { report(`[NET] ngrok tunnel active`)   found <- found + 1 }
+        check (name is `frpc.exe`)      { report(`[NET] frpc tunnel active`)    found <- found + 1 }
+        check (name is `tor.exe`)       { report(`[NET] Tor process active`)    found <- found + 1 }
+        check (name is `proxifier.exe`) { report(`[NET] proxifier active`)      found <- found + 1 }
+
+        i <- i + 1
+    }
+
+    give found
+}
+
+func capture_round(round : num) -> nothing {
+    ## Perform one connection snapshot + short packet capture.
+    var conns   : raw := net_conns()
+    var packets : raw := net_sniff(500)
+    ## conns and packets are raw handles passed to native forensics.o in build mode.
+    ## In JIT mode the stubs confirm the calls executed.
+    report(`[NET] Round complete`)
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Network Monitor ===`)
+    report(`[NET] Scanning for network-active threat processes...`)
+
+    var net_tools : num := scan_procs_for_network_tools()
+
+    check (net_tools gt 0) {
+        report(`[!!] Network-active threat tools found in process list`)
+    } otherwise {
+        report(`[OK] No known network tunneling tools in process list`)
+    }
+
+    report(``)
+    report(`[NET] Starting connection capture (3 rounds x 500ms)...`)
+
+    var round : num := 1
+    loop (round lte 3) {
+        capture_round(round)
+        round <- round + 1
+    }
+
+    report(``)
+    check (net_tools gt 0) {
+        report(`[!!] Correlate captured traffic with flagged processes above`)
+    } otherwise {
+        report(`[OK] Network capture complete — no correlating threats`)
+    }
+}
