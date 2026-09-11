@@ -34,8 +34,9 @@ const char *const kUsage =
     "  jocky build <in.jk> [-o <out>] [-O0|-O1] [--emit-llvm] [--emit-obj]\n"
     "                      [-l <lib>] [-L <dir>]\n"
     "                      [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
-    "                      [--keep-temps] [--no-verify] [-v]\n"
-    "  jocky build <in.jk> --run [--obfuscate[=<passes>]] [--obf-seed <n>] [-v]\n"
+    "                      [--polymorphic] [--keep-temps] [--no-verify] [-v]\n"
+    "  jocky build <in.jk> --run [--obfuscate[=<passes>]] [--obf-seed <n>]\n"
+    "                      [--polymorphic] [-v]\n"
     "                      (JIT-compile and execute; no .obj or .exe written)\n"
     "  jocky check <in.jk>                    (front end + semantic analysis only)\n"
     "  jocky lex   --dump-tokens <in.jk>\n"
@@ -43,7 +44,11 @@ const char *const kUsage =
     "  jocky --version\n"
     "  jocky --help\n"
     "\n"
-    "Input files must have a '.jk' extension.\n";
+    "Input files must have a '.jk' extension.\n"
+    "\n"
+    "--polymorphic enables strenc+flatten+reorder+indirect+vjunk with a fresh\n"
+    "  crypto-random seed each build, guaranteeing a unique binary hash every run.\n"
+    "  Combine with --obf-seed <n> to pin the seed for a reproducible build.\n";
 
 void printUsage(llvm::raw_ostream &os) { os << kUsage; }
 
@@ -127,6 +132,8 @@ std::optional<int> parseArgs(int argc, char **argv, Options &opts) {
             opts.emitObj = true;
         } else if (a == "--run") {
             opts.runInMemory = true;
+        } else if (a == "--polymorphic") {
+            opts.polymorphic = true;
         } else if (a == "--obfuscate") {
             opts.obfuscate = true;
         } else if (a.rfind("--obfuscate=", 0) == 0) {

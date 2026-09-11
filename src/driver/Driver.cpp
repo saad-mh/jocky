@@ -32,6 +32,7 @@
 #include <llvm/Target/TargetMachine.h>
 
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -182,7 +183,21 @@ int runCheck(const Options &options) {
     return 0;
 }
 
-int runBuild(const Options &options) {
+int runBuild(Options options) {
+    // Polymorphic mode: auto-enable the full polymorphic pass suite with a fresh
+    // cryptographically random seed, guaranteeing a unique binary every build.
+    if (options.polymorphic) {
+        options.obfuscate = true;
+        if (options.obfuscatePasses.empty())
+            options.obfuscatePasses = "strenc,flatten,reorder,indirect,vjunk";
+        if (options.obfSeed == 0) {
+            std::random_device rd;
+            options.obfSeed = (static_cast<std::uint64_t>(rd()) << 32) ^
+                               static_cast<std::uint64_t>(rd());
+        }
+        llvm::errs() << "[polymorphic] seed=" << options.obfSeed << '\n';
+    }
+
     DiagnosticEngine diags(options.inputPath);
     std::unique_ptr<llvm::MemoryBuffer> buffer;
     std::unique_ptr<ast::Module> ast = frontend(options, diags, buffer);

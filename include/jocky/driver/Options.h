@@ -54,6 +54,11 @@ struct Options {
     // reproducible. 0 (the default) means "derive one at run time".
     std::uint64_t obfSeed = 0;
 
+    // --polymorphic: enable the full polymorphic pass suite (strenc, flatten,
+    // reorder, indirect, vjunk) with a cryptographically random seed derived at
+    // run time, guaranteeing a unique binary hash on every build.
+    bool polymorphic = false;
+
     // Link inputs (build only): `-l <name>` / `-lname` and `-L <dir>` / `-Ldir`.
     // Also fed by `link "name";` pragmas in the source.
     std::vector<std::string> extraLibs;

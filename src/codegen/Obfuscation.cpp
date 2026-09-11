@@ -17,7 +17,8 @@
 #include <llvm/IR/PassManager.h>  // createModuleToFunctionPassAdaptor
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Transforms/Scalar/Reg2Mem.h>  // RegToMemPass
+#include <llvm/Transforms/Scalar/Reg2Mem.h>    // RegToMemPass
+#include <llvm/Transforms/Utils/ModuleUtils.h>  // appendToGlobalCtors
 
 #include <algorithm>
 #include <array>
@@ -32,11 +33,14 @@ namespace {
 
 // Every obfuscation pass name, in the order they run when all are requested.
 // Keep in sync with the dispatch at the bottom of addObfuscationPasses().
-constexpr std::array<llvm::StringRef, 4> kKnownPasses = {
-    llvm::StringRef("split"),     // structural: split blocks first
-    llvm::StringRef("flatten"),   // then flatten the (now larger) CFG
-    llvm::StringRef("indirect"),  // then hide the call graph
-    llvm::StringRef("junk"),      // then pad what remains
+constexpr std::array<llvm::StringRef, 7> kKnownPasses = {
+    llvm::StringRef("strenc"),   // encrypt string literals before CFG transforms
+    llvm::StringRef("split"),    // structural: split blocks first
+    llvm::StringRef("flatten"),  // then flatten the (now larger) CFG
+    llvm::StringRef("reorder"),  // shuffle function order in the module
+    llvm::StringRef("indirect"), // then hide the call graph
+    llvm::StringRef("vjunk"),    // volatile junk that survives DCE into the binary
+    llvm::StringRef("junk"),     // dead junk (structural only, safe at -O0)
 };
 
 // A run-time seed for when the user did not pin one with --obf-seed.
@@ -287,6 +291,155 @@ llvm::PreservedAnalyses CallIndirectionPass::run(llvm::Module &m,
                    : llvm::PreservedAnalyses::all();
 }
 
+llvm::PreservedAnalyses StringEncryptionPass::run(llvm::Module &m,
+                                                   llvm::ModuleAnalysisManager &) {
+    std::mt19937_64 rng(seed_ ^ 0x6a6b000073747265ULL /* "jk\0\0stre" */);
+
+    llvm::LLVMContext &ctx = m.getContext();
+    llvm::Type *i8Ty = llvm::Type::getInt8Ty(ctx);
+    llvm::Type *i64Ty = llvm::Type::getInt64Ty(ctx);
+    llvm::Type *voidTy = llvm::Type::getVoidTy(ctx);
+
+    // Collect every private constant i8-array global whose name starts with
+    // "jocky.str" (the name given by CodeGen::internCString).
+    llvm::SmallVector<llvm::GlobalVariable *, 32> strGlobals;
+    for (llvm::GlobalVariable &gv : m.globals()) {
+        if (!gv.getName().starts_with("jocky.str")) continue;
+        if (!gv.isConstant()) continue;
+        auto *arrTy = llvm::dyn_cast<llvm::ArrayType>(gv.getValueType());
+        if (!arrTy || !arrTy->getElementType()->isIntegerTy(8)) continue;
+        strGlobals.push_back(&gv);
+    }
+    if (strGlobals.empty()) return llvm::PreservedAnalyses::all();
+
+    // Create a single private void() decryption constructor.
+    llvm::FunctionType *initFT = llvm::FunctionType::get(voidTy, false);
+    llvm::Function *initFn = llvm::Function::Create(
+        initFT, llvm::GlobalValue::InternalLinkage, "jk.strenc.init", &m);
+    llvm::BasicBlock *initBB = llvm::BasicBlock::Create(ctx, "entry", initFn);
+    llvm::IRBuilder<> b(initBB);
+
+    for (llvm::GlobalVariable *gv : strGlobals) {
+        auto *arrTy = llvm::cast<llvm::ArrayType>(gv->getValueType());
+        const uint64_t len = arrTy->getNumElements();
+        if (len == 0) continue;
+
+        // Non-zero XOR key (always odd to avoid accidental zero).
+        const uint8_t key = static_cast<uint8_t>((rng() & 0xFEULL) | 1ULL);
+
+        // Read the original bytes from the constant initializer.
+        llvm::SmallVector<uint8_t, 256> plain(len, 0);
+        if (auto *cda = llvm::dyn_cast<llvm::ConstantDataArray>(gv->getInitializer())) {
+            llvm::StringRef raw = cda->getRawDataValues();
+            for (uint64_t i = 0; i < len && i < raw.size(); ++i)
+                plain[i] = static_cast<uint8_t>(raw[i]);
+        }
+        // ConstantAggregateZero: all zeros; XOR is a no-op but key is still stored.
+
+        // Build an encrypted initializer.
+        llvm::SmallVector<llvm::Constant *, 256> encConsts(len);
+        for (uint64_t i = 0; i < len; ++i)
+            encConsts[i] = llvm::ConstantInt::get(i8Ty, plain[i] ^ key);
+        llvm::Constant *encInit = llvm::ConstantArray::get(arrTy, encConsts);
+
+        // Swap the global to mutable with the encrypted initializer.
+        gv->setConstant(false);
+        gv->setInitializer(encInit);
+
+        // Emit inline decryption in the init function: byte ^= key for each byte.
+        llvm::Constant *keyC = llvm::ConstantInt::get(i8Ty, key);
+        for (uint64_t i = 0; i < len; ++i) {
+            llvm::Value *idxs[] = {llvm::ConstantInt::get(i64Ty, 0),
+                                   llvm::ConstantInt::get(i64Ty, i)};
+            llvm::Value *ptr = b.CreateInBoundsGEP(arrTy, gv, idxs);
+            llvm::Value *enc = b.CreateLoad(i8Ty, ptr);
+            llvm::Value *dec = b.CreateXor(enc, keyC);
+            b.CreateStore(dec, ptr);
+        }
+    }
+    b.CreateRetVoid();
+
+    // Register the init function to run before main (priority 65535 = last ctors).
+    llvm::appendToGlobalCtors(m, initFn, 65535);
+
+    return llvm::PreservedAnalyses::none();
+}
+
+llvm::PreservedAnalyses FunctionReorderingPass::run(llvm::Module &m,
+                                                     llvm::ModuleAnalysisManager &) {
+    std::mt19937_64 rng(seed_ ^ 0x6a6b000072656f72ULL /* "jk\0\0reor" */);
+
+    // Collect all non-declaration functions. Includes any jk.* helpers this pass
+    // runs after; their position in .text does not affect correctness.
+    llvm::SmallVector<llvm::Function *, 32> defs;
+    for (llvm::Function &fn : m)
+        if (!fn.isDeclaration()) defs.push_back(&fn);
+
+    if (defs.size() < 2) return llvm::PreservedAnalyses::all();
+    std::shuffle(defs.begin(), defs.end(), rng);
+
+    // Move each definition to the end of the module function list in shuffled
+    // order so definitions end up in that order and declarations stay at the front.
+    auto &list = m.getFunctionList();
+    for (llvm::Function *fn : defs)
+        list.splice(list.end(), list, fn->getIterator());
+
+    return llvm::PreservedAnalyses::none();
+}
+
+llvm::PreservedAnalyses VolatileJunkPass::run(llvm::Module &m,
+                                               llvm::ModuleAnalysisManager &) {
+    std::mt19937_64 rng(seed_ ^ 0x6a6b0000766a6e6bULL /* "jk\0\0vjnk" */);
+    llvm::Type *i64Ty = llvm::Type::getInt64Ty(m.getContext());
+    bool changed = false;
+
+    // One private i64 sink that volatile stores drain into. The volatile
+    // attribute prevents any optimizer from removing either the store or the
+    // arithmetic that feeds it.
+    llvm::GlobalVariable *sink = m.getGlobalVariable("jk.sink");
+    if (!sink) {
+        sink = new llvm::GlobalVariable(
+            m, i64Ty, /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantInt::get(i64Ty, 0), "jk.sink");
+        sink->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    }
+
+    for (llvm::Function &fn : m) {
+        if (fn.isDeclaration()) continue;
+
+        for (llvm::BasicBlock &bb : fn) {
+            llvm::Instruction *term = bb.getTerminator();
+            if (!term) continue;
+
+            llvm::IRBuilder<llvm::NoFolder> b(term);
+
+            // Anchor the junk chain on an existing i64 value when available.
+            llvm::Value *v = nullptr;
+            for (llvm::Instruction &inst : bb) {
+                if (&inst == term) break;
+                if (inst.getType() == i64Ty) v = &inst;
+            }
+            if (!v) v = llvm::ConstantInt::get(i64Ty, rng());
+
+            const unsigned n = 1 + static_cast<unsigned>(rng() % 3);
+            for (unsigned i = 0; i < n; ++i) {
+                llvm::Value *k = llvm::ConstantInt::get(i64Ty, rng() | 1ULL);
+                switch (rng() % 3) {
+                case 0:  v = b.CreateAdd(v, k, "jk.vadd"); break;
+                case 1:  v = b.CreateXor(v, k, "jk.vxor"); break;
+                default: v = b.CreateMul(v, k, "jk.vmul"); break;
+                }
+            }
+            // Volatile store: a memory side-effect that no pass removes.
+            b.CreateStore(v, sink, /*isVolatile=*/true);
+            changed = true;
+        }
+    }
+
+    return changed ? llvm::PreservedAnalyses::none()
+                   : llvm::PreservedAnalyses::all();
+}
+
 void addObfuscationPasses(llvm::ModulePassManager &mpm,
                           const ObfuscationOptions &obf) {
     llvm::SmallVector<llvm::StringRef, 8> requested;
@@ -309,6 +462,8 @@ void addObfuscationPasses(llvm::ModulePassManager &mpm,
         llvm::errs() << "jocky: obfuscation seed " << seed << '\n';
 
     // dispatch: keep in sync with kKnownPasses
+    if (wanted("strenc"))
+        mpm.addPass(StringEncryptionPass(seed ^ 0x5));
     if (wanted("split"))
         mpm.addPass(BlockSplittingPass(seed ^ 0x1));
     if (wanted("flatten")) {
@@ -317,8 +472,12 @@ void addObfuscationPasses(llvm::ModulePassManager &mpm,
         mpm.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::RegToMemPass()));
         mpm.addPass(FlatteningPass(seed ^ 0x2));
     }
+    if (wanted("reorder"))
+        mpm.addPass(FunctionReorderingPass(seed ^ 0x6));
     if (wanted("indirect"))
         mpm.addPass(CallIndirectionPass(seed ^ 0x3));
+    if (wanted("vjunk"))
+        mpm.addPass(VolatileJunkPass(seed ^ 0x7));
     if (wanted("junk"))
         mpm.addPass(JunkInsertionPass(seed ^ 0x4));
 }

@@ -87,6 +87,46 @@ private:
     std::uint64_t seed_;
 };
 
+// Encrypts all @jocky.str* string globals with a per-string XOR key and
+// registers a module constructor that decrypts them before main runs, so
+// string literals are not visible as plaintext in the binary at rest. Call
+// sites are unchanged. Must run before CFG transforms (split, flatten).
+class StringEncryptionPass : public llvm::PassInfoMixin<StringEncryptionPass> {
+public:
+    explicit StringEncryptionPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
+// Shuffles the order of function definitions in the module symbol table list.
+// No IR semantics change; only the binary's .text section layout is affected,
+// ensuring a unique binary hash for every unique seed even when instruction
+// counts and opcodes are otherwise identical.
+class FunctionReorderingPass
+    : public llvm::PassInfoMixin<FunctionReorderingPass> {
+public:
+    explicit FunctionReorderingPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
+// Like JunkInsertionPass but routes junk results through a volatile store to
+// @jk.sink so the junk arithmetic survives every DCE pass and reaches the
+// binary. Run this after CFG transforms so the volatile stores are not
+// disturbed by block restructuring.
+class VolatileJunkPass : public llvm::PassInfoMixin<VolatileJunkPass> {
+public:
+    explicit VolatileJunkPass(std::uint64_t seed) : seed_(seed) {}
+    llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &);
+
+private:
+    std::uint64_t seed_;
+};
+
 // the registry
 
 // Appends the obfuscation passes selected by `obf` to `mpm`, in a fixed order.
