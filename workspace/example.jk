@@ -1,0 +1,32 @@
+## ============================================================
+## example.jk — Your first JOCKY script
+## Edit this file, save it, then run:  jocky run workspace/example.jk
+## ============================================================
+
+func greet(name : text) -> nothing {
+    report(`Hello from JOCKY!`)
+    report(name)
+}
+
+func start() -> nothing {
+    report(`My first JOCKY script`)
+    greet(`World`)
+
+    ## Try variables
+    var count : num := 3
+    var i : num := 0
+    loop (i lt count) {
+        report(`Loop iteration`)
+        i <- i + 1
+    }
+
+    ## Try a condition
+    var flag_val : flag := yes
+    check (flag_val is yes) {
+        report(`Flag is set!`)
+    } otherwise {
+        report(`Flag is not set.`)
+    }
+
+    report(`Done!`)
+}

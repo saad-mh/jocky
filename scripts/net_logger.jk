@@ -1,0 +1,82 @@
+## net_logger.jk
+## Repeated network + process snapshots that build a monitoring timeline.
+## Each pass calls net_conns() and iterates the process list.
+## Detects process-count changes between passes (real delta tracking).
+
+func count_suspicious(procs : raw, total : num) -> num {
+    var found : num := 0
+    var i     : num := 0
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        check (name is `nc.exe`)       { found <- found + 1 }
+        check (name is `mimikatz.exe`) { found <- found + 1 }
+        check (name is `xmrig.exe`)    { found <- found + 1 }
+        check (name is `psexec.exe`)   { found <- found + 1 }
+        check (name is `ncat.exe`)     { found <- found + 1 }
+        check (name is `ngrok.exe`)    { found <- found + 1 }
+        i <- i + 1
+    }
+    give found
+}
+
+func log_pass(pass_num : num, prev_total : num, prev_suspicious : num) -> nothing {
+    var conns      : raw := net_conns()
+    var procs      : raw := procs_list()
+    var total      : num := proc_count(procs)
+    var suspicious : num := count_suspicious(procs, total)
+
+    report(`[LOG] --- Pass ---`)
+
+    ## Detect process count delta between passes
+    check (total gt prev_total) {
+        report(`[LOG] [!] Process count INCREASED since last pass`)
+    }
+    check (total lt prev_total) {
+        report(`[LOG] [i] Process count decreased since last pass`)
+    }
+
+    ## Detect new suspicious processes
+    check (suspicious gt prev_suspicious) {
+        report(`[LOG] [!!] NEW suspicious process(es) appeared`)
+    }
+    check (suspicious gt 0) {
+        report(`[LOG] Suspicious processes still present`)
+    } otherwise {
+        report(`[LOG] [OK] No suspicious processes this pass`)
+    }
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Network Logger ===`)
+    report(`[LOG] Initialising baseline...`)
+
+    var procs0      : raw := procs_list()
+    var base_total  : num := proc_count(procs0)
+    var base_susp   : num := count_suspicious(procs0, base_total)
+
+    report(`[LOG] Baseline established`)
+
+    var pass        : num := 1
+    var max_passes  : num := 5
+    var prev_total  : num := base_total
+    var prev_susp   : num := base_susp
+
+    loop (pass lte max_passes) {
+        log_pass(pass, prev_total, prev_susp)
+
+        ## Update prev values for next pass delta tracking
+        var procs_now : raw := procs_list()
+        prev_total <- proc_count(procs_now)
+        prev_susp  <- count_suspicious(procs_now, prev_total)
+
+        pass <- pass + 1
+    }
+
+    report(``)
+    report(`[LOG] Logging complete.`)
+    check (prev_susp gt 0) {
+        report(`[LOG] [!!] Suspicious activity persisted throughout monitoring period`)
+    } otherwise {
+        report(`[LOG] [OK] No sustained suspicious activity detected`)
+    }
+}

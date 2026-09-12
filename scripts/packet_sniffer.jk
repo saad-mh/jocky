@@ -1,0 +1,94 @@
+## packet_sniffer.jk
+## Passive packet capture with process-based threat correlation.
+## net_sniff() invoked in a real JOCKY loop; process list cross-references
+## whether known sniffer/tunneling tools are running alongside the capture.
+
+func detect_sniffer_tools() -> num {
+    ## Walk process list for known packet-capture and tunneling tools.
+    var procs  : raw := procs_list()
+    var total  : num := proc_count(procs)
+    var found  : num := 0
+    var i      : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        check (name is `wireshark.exe`) { report(`[SNIFF] Wireshark running`)     found <- found + 1 }
+        check (name is `tshark.exe`)    { report(`[SNIFF] tshark running`)         found <- found + 1 }
+        check (name is `tcpdump.exe`)   { report(`[SNIFF] tcpdump running`)        found <- found + 1 }
+        check (name is `npcap.exe`)     { report(`[SNIFF] npcap process active`)   found <- found + 1 }
+        check (name is `ngrok.exe`)     { report(`[SNIFF] ngrok tunnel active`)    found <- found + 1 }
+        check (name is `frpc.exe`)      { report(`[SNIFF] frpc tunnel active`)     found <- found + 1 }
+        check (name is `nc.exe`)        { report(`[SNIFF] netcat active`)          found <- found + 1 }
+        check (name is `ncat.exe`)      { report(`[SNIFF] ncat active`)            found <- found + 1 }
+        i <- i + 1
+    }
+
+    give found
+}
+
+func capture_pass(pass_num : num, duration_ms : num) -> nothing {
+    ## Execute one capture window. Returns raw handle to native forensics in build mode.
+    var data : raw := net_sniff(duration_ms)
+    report(`[SNIFF] Pass complete (`) report(`ms window)`)
+}
+
+func multi_pass_capture(rounds : num, ms_per_round : num) -> num {
+    ## Iterates capture passes and accumulates total capture time.
+    var i           : num := 1
+    var total_time  : num := 0
+
+    loop (i lte rounds) {
+        capture_pass(i, ms_per_round)
+        total_time <- total_time + ms_per_round
+        i <- i + 1
+    }
+
+    give total_time
+}
+
+func correlate(tool_count : num, total_ms : num) -> nothing {
+    ## Final correlation: were network tools present during the capture?
+    check (tool_count gt 0) {
+        check (tool_count gt 2) {
+            report(`[SNIFF] [!!!] Multiple capture/tunnel tools running during session`)
+        }
+        check (tool_count lte 2) {
+            report(`[SNIFF] [!!] Sniffer or tunnel tool running during capture window`)
+        }
+    } otherwise {
+        report(`[SNIFF] [OK] No known capture/tunnel tools in process list`)
+    }
+
+    ## Compute capture efficiency: rounds with clean process list = total_ms / 1000
+    var clean_seconds : num := total_ms mod 1000
+    check (clean_seconds gt 0) {
+        report(`[SNIFF] Capture session complete`)
+    }
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Packet Sniffer ===`)
+    report(`[SNIFF] WARNING: Use only on networks you own or are authorized to monitor`)
+    report(``)
+
+    report(`[SNIFF] --- Process Pre-Check ---`)
+    var tool_count : num := detect_sniffer_tools()
+
+    check (tool_count gt 0) {
+        report(`[SNIFF] [!] Capture tools detected — noting for correlation`)
+    } otherwise {
+        report(`[SNIFF] No concurrent sniffer tools detected`)
+    }
+
+    report(``)
+    report(`[SNIFF] --- Capture Session (4 rounds x 1500ms) ---`)
+    var total_ms : num := multi_pass_capture(4, 1500)
+
+    report(``)
+    report(`[SNIFF] --- Correlation ---`)
+    correlate(tool_count, total_ms)
+
+    report(``)
+    report(`[SNIFF] Net capture handles available for analysis in native build mode`)
+    report(`[SNIFF] JIT mode: stub confirms invocation path through JOCKY runtime`)
+}

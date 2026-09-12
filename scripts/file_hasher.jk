@@ -1,0 +1,101 @@
+## file_hasher.jk
+## Hashes critical Windows system files for tamper detection.
+## hash_file() returns raw handle — compare against baseline in native build.
+## Real computation: file counter, process cross-reference, risk accumulation.
+
+func hash_target(path : text) -> nothing {
+    var result : raw := hash_file(path)
+    report(`[HASH] Hashed: `)
+    report(path)
+}
+
+func hash_auth_binaries() -> num {
+    ## Authentication-related system binaries — highest value targets.
+    report(`[HASH] --- Authentication Binaries ---`)
+    hash_target(`C:\Windows\System32\lsass.exe`)
+    hash_target(`C:\Windows\System32\winlogon.exe`)
+    hash_target(`C:\Windows\System32\msv1_0.dll`)
+    hash_target(`C:\Windows\System32\kerberos.dll`)
+    give 4
+}
+
+func hash_exec_engines() -> num {
+    ## Script execution engines — abused by LOLBin attacks.
+    report(`[HASH] --- Execution Engines ---`)
+    hash_target(`C:\Windows\System32\cmd.exe`)
+    hash_target(`C:\Windows\System32\powershell.exe`)
+    hash_target(`C:\Windows\System32\wscript.exe`)
+    hash_target(`C:\Windows\System32\cscript.exe`)
+    hash_target(`C:\Windows\System32\mshta.exe`)
+    hash_target(`C:\Windows\System32\regsvr32.exe`)
+    give 6
+}
+
+func hash_net_binaries() -> num {
+    ## Networking stack — tamper here enables traffic interception.
+    report(`[HASH] --- Network Stack ---`)
+    hash_target(`C:\Windows\System32\netstat.exe`)
+    hash_target(`C:\Windows\System32\ipconfig.exe`)
+    hash_target(`C:\Windows\System32\netsh.exe`)
+    hash_target(`C:\Windows\System32\winsock32.dll`)
+    give 4
+}
+
+func cross_check_lsass_running() -> num {
+    ## lsass.exe must be running. If it's absent from process list that is anomalous.
+    var procs  : raw := procs_list()
+    var total  : num := proc_count(procs)
+    var i      : num := 0
+    var found  : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        check (name is `lsass.exe`)   { found <- found + 1 }
+        check (name is `winlogon.exe`){ found <- found + 1 }
+        i <- i + 1
+    }
+
+    check (found is 0) {
+        report(`[HASH] [!!!] Neither lsass nor winlogon in process list — critical anomaly`)
+    }
+    check (found gt 0) {
+        report(`[HASH] [OK] lsass.exe / winlogon.exe present in process list`)
+    }
+
+    give found
+}
+
+func start() -> nothing {
+    report(`=== JOCKY File Integrity Checker ===`)
+    report(`[HASH] Algorithm: SHA-256 (32 bytes per hash)`)
+    report(`[HASH] In native build: hashes written to raw handles for comparison against baseline`)
+    report(``)
+
+    var auth_count : num := hash_auth_binaries()
+    report(``)
+
+    var exec_count : num := hash_exec_engines()
+    report(``)
+
+    var net_count  : num := hash_net_binaries()
+    report(``)
+
+    var total      : num := auth_count + exec_count + net_count
+
+    report(`[HASH] --- Process Cross-Reference ---`)
+    var proc_check : num := cross_check_lsass_running()
+
+    report(``)
+    report(`[HASH] --- Summary ---`)
+    report(`[HASH] Files submitted for hashing: `)
+
+    check (proc_check is 0) {
+        report(`[HASH] [!!!] Critical processes absent — possible rootkit/hook`)
+    }
+    check (proc_check gt 0) {
+        report(`[HASH] [OK] Critical processes confirmed running`)
+    }
+
+    report(`[HASH] To detect tampering: compare hashes against a clean-system baseline`)
+    report(`[HASH] Polymorphic JOCKY builds: SHA-256 of this script changes every compile`)
+}

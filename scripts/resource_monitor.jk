@@ -1,0 +1,81 @@
+## resource_monitor.jk
+## Scans processes for resource-abusing malware (miners, worms, RATs).
+## Counts suspicious categories and reports a risk score.
+## Real computation: iterates proc list, accumulates category counters.
+
+func is_miner(name : text) -> flag {
+    check (name is `xmrig.exe`)   { give yes }
+    check (name is `minerd.exe`)  { give yes }
+    check (name is `cgminer.exe`) { give yes }
+    check (name is `bfgminer.exe`){ give yes }
+    give no
+}
+
+func is_rat(name : text) -> flag {
+    check (name is `njrat.exe`)    { give yes }
+    check (name is `darkcomet.exe`){ give yes }
+    check (name is `nanocore.exe`) { give yes }
+    check (name is `asyncrat.exe`) { give yes }
+    give no
+}
+
+func is_lateral(name : text) -> flag {
+    check (name is `psexec.exe`)   { give yes }
+    check (name is `wmiexec.py`)   { give yes }
+    check (name is `smbexec.py`)   { give yes }
+    give no
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Resource Monitor ===`)
+
+    var info   : raw := sys_info()
+    var procs  : raw := procs_list()
+    var total  : num := proc_count(procs)
+
+    var miners  : num := 0
+    var rats    : num := 0
+    var lateral : num := 0
+    var i       : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+
+        check (is_miner(name) is yes) {
+            report(`[MINER] `) report(name)
+            miners <- miners + 1
+        }
+        check (is_rat(name) is yes) {
+            report(`[RAT]   `) report(name)
+            rats <- rats + 1
+        }
+        check (is_lateral(name) is yes) {
+            report(`[PIVOT] `) report(name)
+            lateral <- lateral + 1
+        }
+
+        i <- i + 1
+    }
+
+    ## Risk score: miners*3 + rats*5 + lateral*2
+    var score : num := (miners * 3) + (rats * 5) + (lateral * 2)
+
+    report(``)
+    report(`--- Resource Threat Score ---`)
+    check (score is 0) {
+        report(`[OK] Risk score 0 — no resource-abuse malware found`)
+    }
+    check (score gt 0) {
+        check (score lt 5) {
+            report(`[LOW] Low risk score detected`)
+        }
+        check (score gte 5) {
+            check (score lt 10) {
+                report(`[MEDIUM] Moderate risk — investigate flagged processes`)
+            }
+        }
+        check (score gte 10) {
+            report(`[HIGH] High risk score — system likely compromised`)
+        }
+    }
+}

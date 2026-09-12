@@ -1,0 +1,68 @@
+## byovd_scanner.jk — BYOVD Vulnerable Driver Scanner
+## Scans the system for installed drivers that match the LOLDrivers
+## vulnerable-driver database. Reports risk level, CVE, and file path.
+##
+## Run: python jocky.py run scripts/byovd_scanner.jk
+
+func print_separator() -> nothing {
+    report(`========================================`)
+}
+
+func print_risk_header(risk : text) -> nothing {
+    check (risk is `CRITICAL`) {
+        report(`[!!] CRITICAL — EDR/AV Bypass or Ransomware-associated`)
+    }
+    check (risk is `HIGH`) {
+        report(`[!]  HIGH — Kernel read/write or APT-linked`)
+    }
+    check (risk is `MEDIUM`) {
+        report(`[~]  MEDIUM — Hardware access or privilege escalation`)
+    }
+}
+
+func start() -> nothing {
+    print_separator()
+    report(`JOCKY BYOVD Scanner`)
+    report(`Checking system against LOLDrivers database`)
+    print_separator()
+
+    ## Scan the system for vulnerable drivers
+    var results : raw := byovd_scan()
+    var total   : num := byovd_driver_count(results)
+
+    check (total is 0) {
+        report(`[OK] No known-vulnerable drivers found on this system.`)
+        report(`     System appears clean from BYOVD perspective.`)
+        print_separator()
+        give
+    }
+
+    report(`[ALERT] Vulnerable drivers detected on this system!`)
+    report(``)
+
+    var i : num := 0
+    loop (i lt total) {
+        var name : text := byovd_driver_name(results, i)
+        var path : text := byovd_driver_path(results, i)
+        var cve  : text := byovd_driver_cve(results, i)
+        var risk : text := byovd_driver_risk(results, i)
+
+        print_separator()
+        report(`Driver Found:`)
+        report(name)
+        report(`Path:`)
+        report(path)
+        report(`CVE:`)
+        report(cve)
+        report(`Risk:`)
+        print_risk_header(risk)
+
+        i <- i + 1
+    }
+
+    print_separator()
+    report(`BYOVD Scan Complete`)
+    report(`Action: These drivers can be weaponised for kernel-level access.`)
+    report(`Use byovd_load() in kernel mode to activate exploitation path.`)
+    print_separator()
+}

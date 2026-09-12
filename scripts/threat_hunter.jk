@@ -1,0 +1,127 @@
+## threat_hunter.jk
+## Full-spectrum threat hunt: process scan (real data) + net/registry/file calls.
+## Accumulates a threat score from multiple real checks.
+## Process data is live; net/reg/file stubs execute correctly in native build.
+
+func classify_proc(name : text) -> num {
+    ## 3=critical  2=high  1=suspicious  0=clean
+    check (name is `mimikatz.exe`)   { give 3 }
+    check (name is `wce.exe`)        { give 3 }
+    check (name is `pwdump.exe`)     { give 3 }
+    check (name is `gsecdump.exe`)   { give 3 }
+    check (name is `nc.exe`)         { give 2 }
+    check (name is `ncat.exe`)       { give 2 }
+    check (name is `psexec.exe`)     { give 2 }
+    check (name is `xmrig.exe`)      { give 2 }
+    check (name is `cobaltstr.exe`)  { give 2 }
+    check (name is `meterpreter.exe`){ give 2 }
+    check (name is `ngrok.exe`)      { give 1 }
+    check (name is `frpc.exe`)       { give 1 }
+    check (name is `tor.exe`)        { give 1 }
+    give 0
+}
+
+func scan_processes() -> num {
+    ## Returns accumulated threat score from process scan.
+    var procs  : raw := procs_list()
+    var total  : num := proc_count(procs)
+    var score  : num := 0
+    var i      : num := 0
+
+    loop (i lt total) {
+        var name : text := proc_name(procs, i)
+        var cls  : num  := classify_proc(name)
+
+        check (cls is 3) { report(`[TH] [CRITICAL] `) report(name)  score <- score + 30 }
+        check (cls is 2) { report(`[TH] [HIGH]     `) report(name)  score <- score + 10 }
+        check (cls is 1) { report(`[TH] [SUSPECT]  `) report(name)  score <- score + 5  }
+
+        i <- i + 1
+    }
+
+    give score
+}
+
+func check_winlogon() -> num {
+    ## Checks if Winlogon Shell registry value has been hijacked.
+    ## reg_read returns text — can be compared with JOCKY is/isnt.
+    var shell : text := reg_read(`SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`, `Shell`)
+    check (shell isnt ``) {
+        check (shell isnt `explorer.exe`) {
+            report(`[TH] [CRITICAL] Winlogon Shell hijacked: `)
+            report(shell)
+            give 30
+        }
+        report(`[TH] Winlogon Shell: custom value present`)
+        give 5
+    }
+    report(`[TH] Winlogon Shell: standard`)
+    give 0
+}
+
+func check_defender() -> num {
+    ## Returns 20 if Defender is disabled via registry.
+    var av_off : text := reg_read(`SOFTWARE\Policies\Microsoft\Windows Defender`, `DisableAntiSpyware`)
+    check (av_off is `1`) {
+        report(`[TH] [CRITICAL] Windows Defender disabled via registry`)
+        give 20
+    }
+    report(`[TH] Windows Defender policy: not disabled`)
+    give 0
+}
+
+func run_captures() -> nothing {
+    ## Invoke network capture API — handles passed to native forensics in build mode.
+    var conns   : raw := net_conns()
+    var packets : raw := net_sniff(2000)
+    report(`[TH] Network snapshot and 2s packet capture invoked`)
+}
+
+func hash_critical_files() -> num {
+    ## Hash 4 critical system files; count how many API calls executed.
+    var h1 : raw := hash_file(`C:\Windows\System32\lsass.exe`)
+    var h2 : raw := hash_file(`C:\Windows\System32\winlogon.exe`)
+    var h3 : raw := hash_file(`C:\Windows\System32\svchost.exe`)
+    var h4 : raw := hash_file(`C:\Windows\System32\services.exe`)
+    give 4
+}
+
+func start() -> nothing {
+    report(`=== JOCKY Threat Hunter ===`)
+    report(`[TH] Initiating full-spectrum threat hunt...`)
+    report(``)
+
+    report(`[TH] --- Process Scan ---`)
+    var proc_score : num := scan_processes()
+
+    report(``)
+    report(`[TH] --- Registry Checks ---`)
+    var reg_score : num := check_winlogon()
+    var def_score : num := check_defender()
+
+    report(``)
+    report(`[TH] --- Network + File Capture ---`)
+    run_captures()
+    var files_checked : num := hash_critical_files()
+
+    report(``)
+    report(`[TH] --- Summary ---`)
+    var total_score : num := proc_score + reg_score + def_score
+
+    check (total_score is 0) {
+        report(`[TH] [OK] Threat score 0 — no active indicators`)
+    }
+    check (total_score gt 0) {
+        check (total_score lt 15) {
+            report(`[TH] [LOW] Low threat score — verify flagged items`)
+        }
+        check (total_score gte 15) {
+            check (total_score lt 40) {
+                report(`[TH] [MEDIUM] Moderate threat score — investigate`)
+            }
+        }
+        check (total_score gte 40) {
+            report(`[TH] [HIGH] High threat score — system likely compromised`)
+        }
+    }
+}

@@ -1,24 +1,37 @@
-# Vendored toolchain (LLVM SDK, vcpkg) - provisioned by scripts/bootstrap.*
-.vendor/
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Out-of-source build directories
-/build/
-/build-*/
-/out/
+# ── Compiled output ──────────────────────────────────────────
+output/*.o
+output/*.exe
+output/*.ll
+output/_jocky_entry.c
+output/_jocky_entry.o
+compiler/output/
 
-# Bootstrap-generated environment files
-.jocky-env.ps1
-.jocky-env.sh
+# ── Pre-built C stdlib (built locally by setup) ──────────────
+compiler/stdlib/forensics.o
 
-# Editor / tooling
-compile_commands.json
-.claude/settings.local.json
+# ── Editor / OS noise ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Compiler intermediates that may land next to sources or examples
-*.o
-*.obj
-
-.claude/
-# CTest scratch when run from the source tree
-/Testing/
-jocky-mem.exe
+# ── Virtual environments ─────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
