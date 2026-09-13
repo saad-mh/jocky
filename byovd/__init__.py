@@ -7,12 +7,12 @@ Provides:
   kernel   — kernel read/write/callback-enumeration via loaded driver
 """
 
-from .scanner import BYOVDScanner, DriverInfo
+from .scanner import DriverScanner
 from .loader  import DriverLoader, LoaderError
-from .kernel  import KernelOps, KernelError
+from .kernel  import KernelOps, KernelError, KernelInterface
 
 __all__ = [
-    "BYOVDScanner", "DriverInfo",
+    "DriverScanner",
     "DriverLoader", "LoaderError",
-    "KernelOps", "KernelError",
+    "KernelOps", "KernelError", "KernelInterface",
 ]

@@ -1,260 +1,234 @@
 """
-scanner.py — BYOVD Driver Scanner
-
-Enumerates all installed/running kernel drivers on the system, computes their
-SHA-256 hashes, and cross-references against the bundled LOLDrivers database
-(and optionally a live fetch from loldrivers.io).
-
-Works on Windows without admin privileges — reads the registry and hashes
-files in the drivers directory.
+BYOVD Driver Scanner — cross-references installed kernel drivers against the
+LOLDrivers vulnerability database using both filename and SHA-256 hash.
 """
-
-import os
-import sys
-import json
+from __future__ import annotations
 import hashlib
-import urllib.request
-import urllib.error
-from dataclasses import dataclass, field
-from pathlib import Path
+import json
+import os
+import pathlib
+import platform
+import sys
 from typing import Optional
 
-DB_PATH = Path(__file__).parent / "db" / "loldrivers.json"
-LOLDRIVERS_URL = "https://www.loldrivers.io/api/drivers.json"
+_DB_PATH = pathlib.Path(__file__).parent / "db" / "loldrivers.json"
 
+# ── Database loading ──────────────────────────────────────────────────────────
 
-@dataclass
-class DriverInfo:
-    service_name: str
-    filename: str
-    full_path: str
-    sha256: Optional[str]
-    is_vulnerable: bool
-    vuln_entry: Optional[dict] = None
-    tags: list = field(default_factory=list)
-    cve: str = ""
-    vendor: str = ""
-    description: str = ""
+def _load_db() -> list[dict]:
+    if not _DB_PATH.exists():
+        return []
+    with open(_DB_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    def risk_level(self) -> str:
-        if not self.is_vulnerable:
-            return "CLEAN"
-        tags = self.tags
-        if any(t in tags for t in ["AV-Kill", "EDR-Bypass", "Ransomware"]):
-            return "CRITICAL"
-        if any(t in tags for t in ["Kernel-RW", "DKOM", "APT"]):
-            return "HIGH"
+def _build_indices(db: list[dict]) -> tuple[dict, dict]:
+    """Return (name_index, hash_index) where keys are lowercased."""
+    name_idx: dict[str, dict] = {}
+    hash_idx: dict[str, dict] = {}
+    for entry in db:
+        name_idx[entry["Name"].lower()] = entry
+        for sample in entry.get("KnownVulnerableSamples", []):
+            sha = sample.get("SHA256", "").lower()
+            if sha and len(sha) == 64:
+                hash_idx[sha] = entry
+    return name_idx, hash_idx
+
+# ── File hashing ──────────────────────────────────────────────────────────────
+
+def _sha256_file(path: str) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, PermissionError):
+        return None
+
+# ── Risk scoring ──────────────────────────────────────────────────────────────
+
+_TAG_RISK: dict[str, int] = {
+    "Kernel-RW":              10,
+    "AV-Kill":                10,
+    "EDR-Bypass":             9,
+    "Code-Execution":         9,
+    "DKOM":                   8,
+    "Physical-Memory":        7,
+    "Privilege-Escalation":   7,
+    "MMIO":                   5,
+    "APT":                    6,
+    "Ransomware":             8,
+}
+
+def _risk_score(entry: dict) -> int:
+    return min(10, sum(_TAG_RISK.get(t, 1) for t in entry.get("Tags", [])) // max(1, len(entry.get("Tags", [])) - 1))
+
+def _risk_label(score: int) -> str:
+    if score >= 9:
+        return "CRITICAL"
+    if score >= 7:
+        return "HIGH"
+    if score >= 5:
         return "MEDIUM"
+    return "LOW"
 
+# ── Windows scanner ───────────────────────────────────────────────────────────
 
-class BYOVDScanner:
-    def __init__(self, use_live_db: bool = False):
-        self._db: list[dict] = []
-        self._hash_index: dict[str, dict] = {}
-        self._name_index: dict[str, dict] = {}
-        self._load_db(use_live_db)
+def _windows_driver_dirs() -> list[str]:
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    return [
+        os.path.join(windir, "System32", "drivers"),
+        os.path.join(windir, "SysWOW64", "drivers"),
+    ]
 
-    # ── Database loading ──────────────────────────────────────────────────────
+def _scan_windows(name_idx: dict, hash_idx: dict) -> list[dict]:
+    findings = []
+    seen: set[str] = set()
 
-    def _load_db(self, use_live: bool) -> None:
-        data = None
-        if use_live:
-            data = self._fetch_live_db()
-        if data is None:
-            data = self._load_bundled_db()
-        if data:
-            self._db = data
-            self._build_index()
-
-    def _fetch_live_db(self) -> Optional[list]:
+    for driver_dir in _windows_driver_dirs():
+        if not os.path.isdir(driver_dir):
+            continue
         try:
-            req = urllib.request.Request(
-                LOLDRIVERS_URL,
-                headers={"User-Agent": "JOCKY-BYOVD-Scanner/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=8) as r:
-                return json.loads(r.read().decode())
-        except Exception:
-            return None
+            entries_iter = os.scandir(driver_dir)
+        except PermissionError:
+            continue
+        for de in entries_iter:
+            if not de.is_file():
+                continue
+            fname = de.name.lower()
+            if not fname.endswith(".sys"):
+                continue
+            if de.path in seen:
+                continue
+            seen.add(de.path)
 
-    def _load_bundled_db(self) -> list:
-        try:
-            return json.loads(DB_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return []
+            match_entry = None
+            match_method = None
 
-    def _build_index(self) -> None:
-        for entry in self._db:
-            name = entry.get("Name", "").lower()
-            if name:
-                self._name_index[name] = entry
-            for sample in entry.get("KnownVulnerableSamples", []):
-                sha = sample.get("SHA256", "").lower()
-                if sha:
-                    self._hash_index[sha] = entry
+            # Method 1: SHA-256 cross-reference (authoritative)
+            sha = _sha256_file(de.path)
+            if sha and sha in hash_idx:
+                match_entry = hash_idx[sha]
+                match_method = f"SHA256:{sha[:16]}..."
 
-    # ── Driver enumeration ────────────────────────────────────────────────────
+            # Method 2: filename fallback (less reliable — recompiled/renamed drivers may differ)
+            if match_entry is None and fname in name_idx:
+                match_entry = name_idx[fname]
+                match_method = "filename"
 
-    def enumerate_system_drivers(self) -> list[DriverInfo]:
-        """
-        Enumerate all kernel drivers installed on this system by reading the
-        Windows service registry key. Resolves paths and computes SHA-256.
-        """
-        if sys.platform != "win32":
-            return self._mock_drivers()
+            if match_entry is None:
+                continue
 
-        drivers = []
-        try:
-            import winreg
-            key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SYSTEM\CurrentControlSet\Services",
-            )
-            i = 0
-            while True:
-                try:
-                    svc_name = winreg.EnumKey(key, i)
-                    i += 1
-                except OSError:
-                    break
-                try:
-                    svc_key = winreg.OpenKey(key, svc_name)
-                    try:
-                        svc_type, _ = winreg.QueryValueEx(svc_key, "Type")
-                        if svc_type not in (1, 2):  # 1=kernel, 2=filesystem driver
-                            continue
-                        try:
-                            image_path, _ = winreg.QueryValueEx(svc_key, "ImagePath")
-                        except OSError:
-                            continue
-                        real_path = self._resolve_driver_path(image_path)
-                        sha256 = self._hash_file(real_path)
-                        info = self._check_driver(svc_name, real_path, sha256)
-                        drivers.append(info)
-                    except OSError:
-                        pass
-                    finally:
-                        winreg.CloseKey(svc_key)
-                except OSError:
-                    pass
-            winreg.CloseKey(key)
-        except Exception as e:
-            pass
+            score = _risk_score(match_entry)
+            findings.append({
+                "path":   de.path,
+                "name":   de.name,
+                "sha256": sha or "unavailable",
+                "match":  match_method,
+                "entry":  match_entry,
+                "risk":   _risk_label(score),
+                "score":  score,
+            })
 
-        return drivers
+    findings.sort(key=lambda x: x["score"], reverse=True)
+    return findings
 
-    def _resolve_driver_path(self, image_path: str) -> str:
-        sysroot = os.environ.get("SystemRoot", r"C:\Windows")
-        path = image_path
-        # Replace common path prefixes
-        for prefix in (r"\SystemRoot", r"%SystemRoot%", r"\Windows"):
-            if path.lower().startswith(prefix.lower()):
-                path = sysroot + path[len(prefix):]
-                break
-        # Handle kernel-style paths like \??\C:\...
-        if path.startswith("\\??\\"):
-            path = path[4:]
-        return path
+# ── Linux scanner ─────────────────────────────────────────────────────────────
 
-    def _hash_file(self, path: str) -> Optional[str]:
-        try:
-            h = hashlib.sha256()
-            with open(path, "rb") as f:
-                while chunk := f.read(65536):
-                    h.update(chunk)
-            return h.hexdigest().lower()
-        except Exception:
-            return None
+def _linux_module_dirs() -> list[str]:
+    dirs = []
+    try:
+        import subprocess
+        kr = subprocess.check_output(["uname", "-r"], text=True).strip()
+        dirs.append(f"/lib/modules/{kr}/kernel/drivers")
+        dirs.append(f"/lib/modules/{kr}")
+    except Exception:
+        dirs.append("/lib/modules")
+    return dirs
 
-    def _check_driver(self, svc_name: str, path: str, sha256: Optional[str]) -> DriverInfo:
-        filename = os.path.basename(path)
-        vuln_entry = None
+def _scan_linux(name_idx: dict, hash_idx: dict) -> list[dict]:
+    findings = []
+    seen: set[str] = set()
 
-        # Check by SHA256 first (most reliable)
-        if sha256 and sha256 in self._hash_index:
-            vuln_entry = self._hash_index[sha256]
+    for base in _linux_module_dirs():
+        for root, _, files in os.walk(base):
+            for fname in files:
+                if not (fname.endswith(".ko") or fname.endswith(".ko.xz") or fname.endswith(".ko.gz")):
+                    continue
+                fpath = os.path.join(root, fname)
+                if fpath in seen:
+                    continue
+                seen.add(fpath)
 
-        # Fallback: check by filename
-        if vuln_entry is None and filename.lower() in self._name_index:
-            vuln_entry = self._name_index[filename.lower()]
+                # strip extensions
+                bare = fname
+                for ext in (".ko.xz", ".ko.gz", ".ko"):
+                    if bare.endswith(ext):
+                        bare = bare[: -len(ext)]
+                        break
 
-        if vuln_entry:
-            return DriverInfo(
-                service_name=svc_name,
-                filename=filename,
-                full_path=path,
-                sha256=sha256,
-                is_vulnerable=True,
-                vuln_entry=vuln_entry,
-                tags=vuln_entry.get("Tags", []),
-                cve=vuln_entry.get("CVE", ""),
-                vendor=vuln_entry.get("Vendor", ""),
-                description=vuln_entry.get("Description", ""),
-            )
+                match_entry = None
+                match_method = None
 
-        return DriverInfo(
-            service_name=svc_name,
-            filename=filename,
-            full_path=path,
-            sha256=sha256,
-            is_vulnerable=False,
-        )
+                sha = _sha256_file(fpath)
+                if sha and sha in hash_idx:
+                    match_entry = hash_idx[sha]
+                    match_method = f"SHA256:{sha[:16]}..."
 
-    # ── Mock drivers (non-Windows / demo) ─────────────────────────────────────
+                if match_entry is None and bare.lower() in name_idx:
+                    match_entry = name_idx[bare.lower()]
+                    match_method = "filename"
 
-    def _mock_drivers(self) -> list[DriverInfo]:
-        mock_list = [
-            ("ntfs",        "ntfs.sys",        r"C:\Windows\System32\drivers\ntfs.sys"),
-            ("disk",        "disk.sys",         r"C:\Windows\System32\drivers\disk.sys"),
-            ("RTCore64",    "RTCore64.sys",     r"C:\Windows\System32\drivers\RTCore64.sys"),
-            ("WinRing0_1_2_0", "WinRing0x64.sys", r"C:\Windows\System32\drivers\WinRing0x64.sys"),
-        ]
-        results = []
-        for svc, filename, path in mock_list:
-            vuln_entry = self._name_index.get(filename.lower())
-            if vuln_entry:
-                results.append(DriverInfo(
-                    service_name=svc,
-                    filename=filename,
-                    full_path=path,
-                    sha256="[simulated]",
-                    is_vulnerable=True,
-                    vuln_entry=vuln_entry,
-                    tags=vuln_entry.get("Tags", []),
-                    cve=vuln_entry.get("CVE", ""),
-                    vendor=vuln_entry.get("Vendor", ""),
-                    description=vuln_entry.get("Description", ""),
-                ))
-            else:
-                results.append(DriverInfo(
-                    service_name=svc,
-                    filename=filename,
-                    full_path=path,
-                    sha256="[simulated]",
-                    is_vulnerable=False,
-                ))
-        return results
+                if match_entry is None:
+                    continue
 
-    # ── Scan summary ──────────────────────────────────────────────────────────
+                score = _risk_score(match_entry)
+                findings.append({
+                    "path":   fpath,
+                    "name":   fname,
+                    "sha256": sha or "unavailable",
+                    "match":  match_method,
+                    "entry":  match_entry,
+                    "risk":   _risk_label(score),
+                    "score":  score,
+                })
 
-    def scan(self, use_live_db: bool = False) -> dict:
-        """Run a full scan and return a structured result dict."""
-        if use_live_db:
-            self._load_db(use_live=True)
+    findings.sort(key=lambda x: x["score"], reverse=True)
+    return findings
 
-        drivers = self.enumerate_system_drivers()
-        vulnerable = [d for d in drivers if d.is_vulnerable]
-        critical   = [d for d in vulnerable if d.risk_level() == "CRITICAL"]
-        high       = [d for d in vulnerable if d.risk_level() == "HIGH"]
+# ── Public interface ──────────────────────────────────────────────────────────
 
-        return {
-            "total_drivers":      len(drivers),
-            "vulnerable_count":   len(vulnerable),
-            "critical_count":     len(critical),
-            "high_count":         len(high),
-            "all_drivers":        drivers,
-            "vulnerable_drivers": vulnerable,
-        }
+class DriverScanner:
+    def __init__(self) -> None:
+        self._db = _load_db()
+        self._name_idx, self._hash_idx = _build_indices(self._db)
 
-    def db_size(self) -> int:
+    def scan(self) -> list[dict]:
+        """Scan the current platform's driver directories. Returns sorted findings."""
+        if sys.platform.startswith("linux"):
+            return _scan_linux(self._name_idx, self._hash_idx)
+        return _scan_windows(self._name_idx, self._hash_idx)
+
+    def db_entry_count(self) -> int:
         return len(self._db)
+
+    def print_report(self, findings: Optional[list[dict]] = None) -> None:
+        if findings is None:
+            findings = self.scan()
+        print(f"\n[SCANNER] LOLDrivers DB: {self.db_entry_count()} entries")
+        print(f"[SCANNER] Found {len(findings)} vulnerable driver(s) on this system\n")
+        for f in findings:
+            e = f["entry"]
+            print(f"  [{f['risk']:8s}] {f['name']}")
+            print(f"           CVE      : {e.get('CVE','N/A')}")
+            print(f"           Tags     : {', '.join(e.get('Tags',[]))}")
+            print(f"           Match    : {f['match']}")
+            print(f"           SHA256   : {f['sha256']}")
+            print(f"           Path     : {f['path']}")
+            print(f"           Desc     : {e.get('Description','')}")
+            print()
+
+
+if __name__ == "__main__":
+    scanner = DriverScanner()
+    scanner.print_report()

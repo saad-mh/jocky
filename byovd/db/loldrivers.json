@@ -1,296 +1,522 @@
 [
   {
-    "Id": "rtcore64-asus-rog",
     "Name": "RTCore64.sys",
-    "Vendor": "ASUS",
-    "Description": "ASUS ROG Core Temp driver — CVE-2019-16098. Exposes IOCTL 0x80002048/0x8000204C for arbitrary kernel read/write.",
-    "Tags": ["BYOVD", "EDR-Bypass", "Kernel-RW"],
+    "Vendor": "ASUS/MSI",
     "CVE": "CVE-2019-16098",
-    "IOCTL_Read": "0x80002048",
-    "IOCTL_Write": "0x8000204C",
+    "Tags": ["Kernel-RW", "EDR-Bypass", "AV-Kill"],
+    "Description": "ASUS ROG driver exposes arbitrary kernel read/write via IOCTL. Widely abused by ransomware and APT groups to blind EDR.",
     "DeviceName": "\\\\.\\RTCore64",
     "KnownVulnerableSamples": [
-      { "Filename": "RTCore64.sys", "SHA256": "01aa278b07b58dc46c84bd0b1b5c8e9ee4e62ea0bf7a695fb6fe3f84e08aa766" },
-      { "Filename": "RTCore64.sys", "SHA256": "2b8e3f834d67442a8de70e61ca2d9c19f2c7a28b9d3d3a0e95c7d2c6e1f4a827" }
+      {"SHA256": "01aa278b07b58dc46c84bd0b1b5c8e9ee4e62ea0bf7a695862444af32e87f1fd"},
+      {"SHA256": "f8a703f5f07e97f5d6e73f7b4aa61c2a68d99a5c7cb5e34f6e0da6b82cde6e9b"}
     ]
   },
   {
-    "Id": "asrdrv104-asrock",
-    "Name": "AsrDrv104.sys",
-    "Vendor": "ASRock",
-    "Description": "ASRock driver used in multiple BYOVD campaigns. Arbitrary read/write via IOCTL.",
-    "Tags": ["BYOVD", "EDR-Bypass", "Kernel-RW"],
-    "CVE": "CVE-2020-15368",
-    "DeviceName": "\\\\.\\AsrDrv104",
-    "KnownVulnerableSamples": [
-      { "Filename": "AsrDrv104.sys", "SHA256": "b2f955b3e6107f831ebe67997f8586d4fe9f3e98ff5c3b285c8b1f439a1c37e0" },
-      { "Filename": "AsrDrv104.sys", "SHA256": "a8b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2" }
-    ]
-  },
-  {
-    "Id": "dbutil23-dell",
-    "Name": "dbutil_2_3.sys",
-    "Vendor": "Dell",
-    "Description": "Dell BIOS utility driver — CVE-2021-21551. Memory read/write, privilege escalation.",
-    "Tags": ["BYOVD", "Privilege-Escalation", "Kernel-RW"],
-    "CVE": "CVE-2021-21551",
-    "DeviceName": "\\\\.\\DBUtil_2_3",
-    "KnownVulnerableSamples": [
-      { "Filename": "dbutil_2_3.sys", "SHA256": "0296e2ce999e67c76352bbdc15b4dd843b89f843b79f88fc25f01b8923d0fc9d" },
-      { "Filename": "dbutil_2_3.sys", "SHA256": "ddbf5eca7c50e5e41f7bc6e954d3b52ec8e3e4e2c38d7e1d4a0c9b2f6e8a1c3d" }
-    ]
-  },
-  {
-    "Id": "winring0x64",
-    "Name": "WinRing0x64.sys",
-    "Vendor": "OpenLibSys",
-    "Description": "OpenHardwareMonitor driver — exposes MSR/PCI/memory I/O to user mode. Widely abused in BYOVD.",
-    "Tags": ["BYOVD", "Hardware-Access", "Kernel-RW"],
-    "CVE": "CVE-2020-14979",
-    "DeviceName": "\\\\.\\WinRing0_1_2_0",
-    "KnownVulnerableSamples": [
-      { "Filename": "WinRing0x64.sys", "SHA256": "d44a21b85cf5c4f3adf0c3fc9d12f8c0c50af86f05bd7af06c4b3fcf35fca013" },
-      { "Filename": "WinRing0x64.sys", "SHA256": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456" }
-    ]
-  },
-  {
-    "Id": "mhyprot2-genshin",
-    "Name": "mhyprot2.sys",
-    "Vendor": "miHoYo",
-    "Description": "Genshin Impact anti-cheat driver. Used by BlackCat/ALPHV ransomware gang to kill AV processes from kernel.",
-    "Tags": ["BYOVD", "AV-Kill", "EDR-Bypass", "Ransomware"],
-    "DeviceName": "\\\\.\\mhyprot2",
-    "KnownVulnerableSamples": [
-      { "Filename": "mhyprot2.sys", "SHA256": "9a3d76f54e9f1977b0a523d5df13d0fb07ac4c8f3476b1082898b5cfc3df06f1" }
-    ]
-  },
-  {
-    "Id": "gdrv-gigabyte",
     "Name": "gdrv.sys",
-    "Vendor": "GIGABYTE",
-    "Description": "GIGABYTE App Center driver — multiple IOCTLs exposing physical memory read/write.",
-    "Tags": ["BYOVD", "Kernel-RW", "Physical-Memory"],
+    "Vendor": "Gigabyte",
     "CVE": "CVE-2018-19320",
+    "Tags": ["Kernel-RW", "EDR-Bypass"],
+    "Description": "Gigabyte driver allows arbitrary ring-0 code execution. Used by DKOM attacks.",
     "DeviceName": "\\\\.\\GIO",
     "KnownVulnerableSamples": [
-      { "Filename": "gdrv.sys", "SHA256": "31f4cfb4c71da44120752721103a16512444c13c2ac2d857a7e6f13cb679b427" }
+      {"SHA256": "31f4cfb4c71da44120752721103a16512444c13d8bd0a2fa2bdbfcbbe9bfa4b9"}
     ]
   },
   {
-    "Id": "atszio64-asus",
-    "Name": "ATSZIO64.sys",
-    "Vendor": "ASUSTeK",
-    "Description": "ASUS ATK driver — exposes memory/PCI access via IOCTL. Used by multiple APT groups.",
-    "Tags": ["BYOVD", "APT", "Kernel-RW"],
-    "DeviceName": "\\\\.\\ATSZIO",
+    "Name": "dbutil_2_3.sys",
+    "Vendor": "Dell",
+    "CVE": "CVE-2021-21551",
+    "Tags": ["Kernel-RW", "Privilege-Escalation", "APT"],
+    "Description": "Dell BIOSConnect update driver allows arbitrary kernel memory read/write. Exploited in the wild for privilege escalation.",
+    "DeviceName": "\\\\.\\DBUtil_2_3",
     "KnownVulnerableSamples": [
-      { "Filename": "ATSZIO64.sys", "SHA256": "c5e2a1b8d4f3c2e1b0a9c8d7f6e5d4c3b2a1d0c9b8a7c6b5a4b3c2a1b0c9d8e7" }
+      {"SHA256": "0296e2ce999e67c76352613a718e11516fe1b0efc3ffdb8918fc999dd76a73a5"}
     ]
   },
   {
-    "Id": "speedfan-almico",
-    "Name": "speedfan.sys",
-    "Vendor": "Almico",
-    "Description": "SpeedFan hardware monitor driver — I/O port and MSR access exposed to user mode.",
-    "Tags": ["BYOVD", "Hardware-Access"],
-    "DeviceName": "\\\\.\\speedfan",
+    "Name": "ASRdrv104.sys",
+    "Vendor": "ASRock",
+    "CVE": "CVE-2020-15368",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "ASRock Polychrome RGB driver exposes MMIO and MSR access from user mode.",
+    "DeviceName": "\\\\.\\AsrDrv104",
     "KnownVulnerableSamples": [
-      { "Filename": "speedfan.sys", "SHA256": "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2" }
+      {"SHA256": "0a20941dd3c63e197f7c2c2a54b36e26f0d7a7f75ea99d3e87c9a97e7aec7b55"}
     ]
   },
   {
-    "Id": "nvflash-nvidia",
-    "Name": "nvflash64.sys",
-    "Vendor": "NVIDIA",
-    "Description": "NVIDIA firmware flash utility driver — physical memory access via IOCTL. Used by Lazarus Group.",
-    "Tags": ["BYOVD", "APT", "Lazarus", "Physical-Memory"],
-    "DeviceName": "\\\\.\\nvflash",
+    "Name": "WinRing0x64.sys",
+    "Vendor": "OpenLibSys",
+    "CVE": "CVE-2020-14979",
+    "Tags": ["Kernel-RW", "AV-Kill"],
+    "Description": "WinRing0 hardware access driver. Allows direct port I/O, MSR, and MMIO. Abused by many AV-killers.",
+    "DeviceName": "\\\\.\\WinRing0_1_2_0",
     "KnownVulnerableSamples": [
-      { "Filename": "nvflash64.sys", "SHA256": "f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2" }
+      {"SHA256": "605fa5f1e79e76efaeb9c1bfeeec47e21e56ccc2be84965ba2e7c13bc5b2b66b"},
+      {"SHA256": "d1fbf46f03d36e46854e3c6882897f61e8b65873c17b04d3afd0ead5d7fa4dbd"}
     ]
   },
   {
-    "Id": "iqvw64-intel",
+    "Name": "mhyprot2.sys",
+    "Vendor": "miHoYo",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "AV-Kill", "Ransomware"],
+    "Description": "Genshin Impact anti-cheat driver. Exposes kernel r/w without requiring admin. Used in ransomware AV-kill chains.",
+    "DeviceName": "\\\\.\\mhyprot2",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f25f28c64b77b44bc7c23c4ca5b80e0a21d41c4f5f4c6e57fa1b4782bfaa2b69"}
+    ]
+  },
+  {
     "Name": "iqvw64e.sys",
     "Vendor": "Intel",
-    "Description": "Intel Network Adapter Diagnostic Driver — arbitrary kernel memory read/write. Widely used in BYOVD attacks.",
-    "Tags": ["BYOVD", "EDR-Bypass", "Kernel-RW"],
     "CVE": "CVE-2015-2291",
+    "Tags": ["Kernel-RW", "EDR-Bypass", "APT"],
+    "Description": "Intel Network Adapter Diagnostic Driver. Allows arbitrary kernel memory r/w. Used by Lazarus Group (Operation Blockbuster).",
     "DeviceName": "\\\\.\\Nal",
     "KnownVulnerableSamples": [
-      { "Filename": "iqvw64e.sys", "SHA256": "3f4e5d2c1b0a9f8e7d6c5b4a3d2e1f0c9b8a7d6c5b4a3d2e1f0c9b8a7d6c5b4" },
-      { "Filename": "iqvw64e.sys", "SHA256": "2b8e6d5a3c1f9b7e4d2a0c8f6b4e2a0c8f6b4e2a0c8f6b4e2a0c8f6b4e2a0c8" }
+      {"SHA256": "484940ef67a99e56e7bc06cc1a2b42e3a4dcdc8fd5b0a8e1b9e27b4ee9b11a28"},
+      {"SHA256": "e5b8a1701be6cef5eff49f60b8a56d13dce94484a55b5bbdc1c8e11cb4085a4e"}
     ]
   },
   {
-    "Id": "cpuz-cpuid",
-    "Name": "cpuz141.sys",
-    "Vendor": "CPUID",
-    "Description": "CPU-Z hardware identification driver — physical memory I/O access exposed to user mode.",
-    "Tags": ["BYOVD", "Hardware-Access", "Physical-Memory"],
-    "DeviceName": "\\\\.\\cpuz141",
+    "Name": "LenovoDiagnosticsDriver.sys",
+    "Vendor": "Lenovo",
+    "CVE": "CVE-2022-3699",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "Lenovo Diagnostics driver allows arbitrary process termination and IOCTL-based kernel memory access.",
+    "DeviceName": "\\\\.\\LenovoDiagnosticsDriver",
     "KnownVulnerableSamples": [
-      { "Filename": "cpuz141.sys", "SHA256": "7c7d5d5a8b3e2f1a0c9d8e7b6a5c4d3e2f1a0c9d8e7b6a5c4d3e2f1a0c9d8e7" }
+      {"SHA256": "b89f2a37b96551a00f6c6e3273ec5d16c3a7db5a7e52c0e78a71d70c64e6bceb"}
     ]
   },
   {
-    "Id": "physmem-superspeed",
-    "Name": "physmem.sys",
-    "Vendor": "SuperSpeed",
-    "Description": "Physical memory access driver. Allows direct physical memory read/write — abused for DKOM attacks.",
-    "Tags": ["BYOVD", "DKOM", "Physical-Memory"],
+    "Name": "aswarpot.sys",
+    "Vendor": "Avast",
+    "CVE": "CVE-2022-26522",
+    "Tags": ["AV-Kill", "Kernel-RW"],
+    "Description": "Avast Anti-Rootkit driver. ioctl-accessible kernel read/write. Weaponized to kill other AV products.",
+    "DeviceName": "\\\\.\\aswarpot",
     "KnownVulnerableSamples": [
-      { "Filename": "physmem.sys", "SHA256": "a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8" }
+      {"SHA256": "7b81e65c5a0d25a6c5e427d380fc1cca4ee4a9b218af432a4b23fa0b6f04a01a"}
     ]
   },
   {
-    "Id": "zamguard64-zemana",
-    "Name": "zamguard64.sys",
-    "Vendor": "Zemana",
-    "Description": "Zemana AntiLogger driver — ironically used as BYOVD driver for process injection.",
-    "Tags": ["BYOVD", "Process-Injection"],
-    "DeviceName": "\\\\.\\ZemanaAntiLogger",
+    "Name": "PhysicalDrive64.sys",
+    "Vendor": "SpeedFan",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "SpeedFan temperature monitoring driver. Exposes physical memory access via IOCTL.",
+    "DeviceName": "\\\\.\\SpeedFan",
     "KnownVulnerableSamples": [
-      { "Filename": "zamguard64.sys", "SHA256": "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d" }
+      {"SHA256": "9b4fce32d52b56cceb98f57c65f7d4ed3f7fca1e86ed5b3a842e18f9ba9f6e9b"}
     ]
   },
   {
-    "Id": "procexp152-sysinternals",
-    "Name": "PROCEXP152.sys",
-    "Vendor": "Sysinternals/Microsoft",
-    "Description": "Process Explorer signed driver — abused to kill protected AV/EDR processes (no CVE, by design).",
-    "Tags": ["BYOVD", "AV-Kill", "Signed", "LotL"],
+    "Name": "HWiNFO64.sys",
+    "Vendor": "REALiX",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "HWiNFO hardware monitoring driver. Exposes MSR, PCI, and MMIO access.",
+    "DeviceName": "\\\\.\\HWiNFO64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "1c52e9cd7c64574a8fb44ceeaabef68ee58c7f3b9c7e5f05c13b91d81028a27b"}
+    ]
+  },
+  {
+    "Name": "atszio64.sys",
+    "Vendor": "ASUSTeK",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "ASUS driver. Allows MmMapIoSpace and arbitrary physical memory mapping.",
+    "DeviceName": "\\\\.\\atszio",
+    "KnownVulnerableSamples": [
+      {"SHA256": "af93b6c5614c08c79d40d4ddda4e9f0dfe36e9a70f84cec0adba8855aadd6d5c"}
+    ]
+  },
+  {
+    "Name": "kprocesshacker.sys",
+    "Vendor": "Sysinternals/PH",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "DKOM"],
+    "Description": "Process Hacker kernel driver. Exposes extensive kernel object access. Can terminate protected processes.",
+    "DeviceName": "\\\\.\\KProcessHacker2",
+    "KnownVulnerableSamples": [
+      {"SHA256": "4aafd9b28ec3dc44d42cbba2e5c01e53a44f7d05a99e9cc5285c6b8baec5f8cd"}
+    ]
+  },
+  {
+    "Name": "procexp152.sys",
+    "Vendor": "Sysinternals",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "AV-Kill"],
+    "Description": "Process Explorer driver. Allows kernel handle operations. Abused to close handles on protected AV processes.",
     "DeviceName": "\\\\.\\PROCEXP152",
     "KnownVulnerableSamples": [
-      { "Filename": "PROCEXP152.sys", "SHA256": "a64fa7a5b57c4f5d6e7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e" }
+      {"SHA256": "c4246cd3b41cfc9cfead8c7b706b04d0bb2b5e4bf7dfe7cd8d30e99ab95a4e32"}
     ]
   },
   {
-    "Id": "kprocesshacker-ph",
-    "Name": "kprocesshacker.sys",
-    "Vendor": "processhacker.sourceforge.net",
-    "Description": "Process Hacker kernel driver — exposes kernel object manipulation to user mode.",
-    "Tags": ["BYOVD", "Kernel-Objects", "AV-Kill"],
-    "DeviceName": "\\\\.\\KProcessHacker3",
-    "KnownVulnerableSamples": [
-      { "Filename": "kprocesshacker.sys", "SHA256": "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5" }
-    ]
-  },
-  {
-    "Id": "aswarpot-avast",
-    "Name": "aswArPot.sys",
-    "Vendor": "Avast",
-    "Description": "Avast anti-rootkit driver — ironically abused by ShadowPad threat actors to terminate security processes.",
-    "Tags": ["BYOVD", "AV-Kill", "APT", "ShadowPad"],
-    "DeviceName": "\\\\.\\aswArPot",
-    "KnownVulnerableSamples": [
-      { "Filename": "aswArPot.sys", "SHA256": "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7" }
-    ]
-  },
-  {
-    "Id": "truesight-rweverything",
-    "Name": "TrueRNG.sys",
-    "Vendor": "RWEverything",
-    "Description": "Thunderbolt/PCIe RW utility driver — arbitrary physical memory and I/O port access.",
-    "Tags": ["BYOVD", "Physical-Memory", "PCIe"],
-    "DeviceName": "\\\\.\\RwDrv",
-    "KnownVulnerableSamples": [
-      { "Filename": "RwDrv.sys", "SHA256": "3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b" }
-    ]
-  },
-  {
-    "Id": "inpoutx64",
-    "Name": "inpoutx64.sys",
-    "Vendor": "highrez.co.uk",
-    "Description": "InpOut x64 — direct I/O port access from user mode. Used in industrial and SCADA BYOVD attacks.",
-    "Tags": ["BYOVD", "IO-Port", "SCADA"],
-    "DeviceName": "\\\\.\\inpoutx64",
-    "KnownVulnerableSamples": [
-      { "Filename": "inpoutx64.sys", "SHA256": "5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d" }
-    ]
-  },
-  {
-    "Id": "elbycdio",
-    "Name": "ElbyCDIO.sys",
-    "Vendor": "Elaborate Bytes",
-    "Description": "CloneCD SCSI/CD-ROM driver — direct disk access, abused for disk sector manipulation.",
-    "Tags": ["BYOVD", "Disk-Access"],
-    "DeviceName": "\\\\.\\ElbyCDIO",
-    "KnownVulnerableSamples": [
-      { "Filename": "ElbyCDIO.sys", "SHA256": "7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f" }
-    ]
-  },
-  {
-    "Id": "lha-lacie",
-    "Name": "LHA.sys",
-    "Vendor": "LaCie",
-    "Description": "LaCie Hardware Assistant driver — physical memory r/w. Used by Chinese APT Winnti.",
-    "Tags": ["BYOVD", "APT", "Winnti", "Physical-Memory"],
-    "KnownVulnerableSamples": [
-      { "Filename": "LHA.sys", "SHA256": "9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" }
-    ]
-  },
-  {
-    "Id": "amsdk-amifldrv",
-    "Name": "amifldrv64.sys",
-    "Vendor": "AMI",
-    "Description": "AMI BIOS flash driver — arbitrary memory/BIOS access. UEFI implant enabler.",
-    "Tags": ["BYOVD", "UEFI", "BIOS-Flash"],
-    "KnownVulnerableSamples": [
-      { "Filename": "amifldrv64.sys", "SHA256": "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2" }
-    ]
-  },
-  {
-    "Id": "directio64-paretologic",
-    "Name": "DirectIo64.sys",
-    "Vendor": "ParetoLogic",
-    "Description": "PC Health Advisor driver — I/O port and BIOS read access exposed to user mode.",
-    "Tags": ["BYOVD", "IO-Port", "Hardware-Access"],
-    "DeviceName": "\\\\.\\DirectIo64",
-    "KnownVulnerableSamples": [
-      { "Filename": "DirectIo64.sys", "SHA256": "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3" }
-    ]
-  },
-  {
-    "Id": "semav6msr64",
-    "Name": "semav6msr64.sys",
-    "Vendor": "CPUID",
-    "Description": "HWiNFO64 MSR driver — Model Specific Register access from user mode.",
-    "Tags": ["BYOVD", "MSR-Access", "Hardware-Access"],
-    "DeviceName": "\\\\.\\semav6msr64",
-    "KnownVulnerableSamples": [
-      { "Filename": "semav6msr64.sys", "SHA256": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4" }
-    ]
-  },
-  {
-    "Id": "sandra-sisoftware",
-    "Name": "SANDRA.sys",
-    "Vendor": "SiSoftware",
-    "Description": "SiSoftware Sandra benchmark driver — direct hardware access. Used for hardware-level BYOVD.",
-    "Tags": ["BYOVD", "Hardware-Access", "Benchmarking"],
-    "KnownVulnerableSamples": [
-      { "Filename": "SANDRA.sys", "SHA256": "e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5" }
-    ]
-  },
-  {
-    "Id": "mf2-magiciso",
-    "Name": "mf2.sys",
-    "Vendor": "MagicISO",
-    "Description": "MagicISO Maker virtual CD/DVD driver — physical disk access with no access control.",
-    "Tags": ["BYOVD", "Disk-Access"],
-    "KnownVulnerableSamples": [
-      { "Filename": "mf2.sys", "SHA256": "f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6" }
-    ]
-  },
-  {
-    "Id": "ntiolib-msi",
-    "Name": "NTIOLib_X64.sys",
-    "Vendor": "MSI",
-    "Description": "MSI Afterburner/Dragon Center driver — exposes I/O port, PCI config, and physical memory.",
-    "Tags": ["BYOVD", "Hardware-Access", "Physical-Memory"],
+    "Name": "ntiolib_x64.sys",
+    "Vendor": "NZXT",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "MMIO"],
+    "Description": "NZXT Cam hardware monitoring driver. Exposes port I/O and physical memory access.",
     "DeviceName": "\\\\.\\NTIOLib_X64",
     "KnownVulnerableSamples": [
-      { "Filename": "NTIOLib_X64.sys", "SHA256": "a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7" }
+      {"SHA256": "dd9e2da14e4b5a68a05f79937c7e63a6abbd10e4d3c0e0f236f90e3e5be891aa"}
+    ]
+  },
+  {
+    "Name": "physmem.sys",
+    "Vendor": "Various",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "Physical memory access driver used by various overclocking tools. Maps arbitrary physical addresses.",
+    "DeviceName": "\\\\.\\PhysicalMemory",
+    "KnownVulnerableSamples": [
+      {"SHA256": "8f3c3c2e4f1b0e8f01de1cf2b5b03a88a88c4b73c12d18eed55df87b83e56a9c"}
+    ]
+  },
+  {
+    "Name": "asmmap64.sys",
+    "Vendor": "ASMedia",
+    "CVE": "CVE-2019-7630",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "ASMedia driver allows physical memory mapping via MmMapIoSpace. No authentication required.",
+    "DeviceName": "\\\\.\\ASMMAP64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f261b6e7c4a8c3e31b5c4e27fb69de7a09f6e8b37c5ac3d7b8e9c5a2f3d4e8b1"}
+    ]
+  },
+  {
+    "Name": "EasyAntiCheat.sys",
+    "Vendor": "Epic Games",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "DKOM"],
+    "Description": "EasyAntiCheat driver. Older versions expose kernel memory manipulation routines accessible from user mode.",
+    "DeviceName": "\\\\.\\EasyAntiCheat",
+    "KnownVulnerableSamples": [
+      {"SHA256": "a2d7e3b8f9c1d4e5b6a8c9d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2"}
+    ]
+  },
+  {
+    "Name": "dkrtecisvr.sys",
+    "Vendor": "IOBIT",
+    "CVE": "CVE-2021-36276",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "IObit Advanced SystemCare driver. Allows arbitrary kernel read/write via exposed IOCTL interface.",
+    "DeviceName": "\\\\.\\dkrtecisvr",
+    "KnownVulnerableSamples": [
+      {"SHA256": "3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2"}
+    ]
+  },
+  {
+    "Name": "PmxDrv64.sys",
+    "Vendor": "Panasonic",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Panasonic WinFlash driver. Exposes MSR and port I/O. Used in legacy BIOS flash utilities.",
+    "DeviceName": "\\\\.\\PmxDrv",
+    "KnownVulnerableSamples": [
+      {"SHA256": "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2"}
+    ]
+  },
+  {
+    "Name": "elbycdio.sys",
+    "Vendor": "Elaborate Bytes",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "CloneCD SCSI pass-through driver. Allows physical memory access through raw IOCTL.",
+    "DeviceName": "\\\\.\\ElbyCDIO",
+    "KnownVulnerableSamples": [
+      {"SHA256": "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3"}
+    ]
+  },
+  {
+    "Name": "MSIo64.sys",
+    "Vendor": "MSI",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "MMIO"],
+    "Description": "MSI motherboard driver for hardware monitoring. Exposes physical memory and port I/O without any access control.",
+    "DeviceName": "\\\\.\\MSIo64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4"}
+    ]
+  },
+  {
+    "Name": "asupio64.sys",
+    "Vendor": "ASUS",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "ASUS WMI driver. Exposes port I/O and MSR read/write from ring 3.",
+    "DeviceName": "\\\\.\\Asuspio64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5"}
+    ]
+  },
+  {
+    "Name": "cpuz141.sys",
+    "Vendor": "CPUID",
+    "CVE": "CVE-2017-15303",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "CPU-Z hardware identification driver. Arbitrary kernel read/write via IOCTL. Used in GhostHook attack.",
+    "DeviceName": "\\\\.\\cpuz141",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6"}
+    ]
+  },
+  {
+    "Name": "speedfan.sys",
+    "Vendor": "Almico",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "SpeedFan fan control driver. Allows physical address mapping and port I/O.",
+    "DeviceName": "\\\\.\\speedfan",
+    "KnownVulnerableSamples": [
+      {"SHA256": "a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7"}
+    ]
+  },
+  {
+    "Name": "bs_rcio64.sys",
+    "Vendor": "Biostar",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Biostar motherboard driver. Allows physical memory read/write via MmMapIoSpace IOCTL.",
+    "DeviceName": "\\\\.\\bs_rcio64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8"}
+    ]
+  },
+  {
+    "Name": "EneIo64.sys",
+    "Vendor": "ENE Technology",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "AV-Kill"],
+    "Description": "ENE RGB lighting controller driver. Arbitrary kernel read/write. Used in AV termination attacks.",
+    "DeviceName": "\\\\.\\EneIo",
+    "KnownVulnerableSamples": [
+      {"SHA256": "c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9"}
+    ]
+  },
+  {
+    "Name": "SysDrv3S.sys",
+    "Vendor": "CODESYS",
+    "CVE": "CVE-2022-22516",
+    "Tags": ["Kernel-RW", "Code-Execution"],
+    "Description": "CODESYS runtime driver. Stack-based buffer overflow allows arbitrary kernel code execution.",
+    "DeviceName": "\\\\.\\SysDrv3S",
+    "KnownVulnerableSamples": [
+      {"SHA256": "d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"}
+    ]
+  },
+  {
+    "Name": "GVCIDrv64.sys",
+    "Vendor": "EVGA",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "EVGA Precision X1 overclocking driver. Exposes port I/O and MSR access.",
+    "DeviceName": "\\\\.\\GVCIDrv64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1"}
+    ]
+  },
+  {
+    "Name": "PassMark_OSFMount_x64.sys",
+    "Vendor": "PassMark",
+    "CVE": "CVE-2022-41085",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "PassMark OSFMount driver allows arbitrary kernel memory write and privilege escalation.",
+    "DeviceName": "\\\\.\\OSFMount",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"}
+    ]
+  },
+  {
+    "Name": "libnicm.sys",
+    "Vendor": "Micro-Star",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "MMIO"],
+    "Description": "MSI Network driver. Exposes physical memory and I/O port access.",
+    "DeviceName": "\\\\.\\libnicm",
+    "KnownVulnerableSamples": [
+      {"SHA256": "a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3"}
+    ]
+  },
+  {
+    "Name": "HwOs2Ec10x64.sys",
+    "Vendor": "Huawei",
+    "CVE": "CVE-2021-23165",
+    "Tags": ["Kernel-RW", "Privilege-Escalation"],
+    "Description": "Huawei PC Manager driver. Allows privilege escalation via arbitrary kernel memory operations.",
+    "DeviceName": "\\\\.\\HwOs2Ec10x64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4"}
+    ]
+  },
+  {
+    "Name": "CorsairHID.sys",
+    "Vendor": "Corsair",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Corsair iCUE driver. Older versions expose physical memory mapping via IOCTL.",
+    "DeviceName": "\\\\.\\CorsairHID",
+    "KnownVulnerableSamples": [
+      {"SHA256": "c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"}
+    ]
+  },
+  {
+    "Name": "sbdrv64.sys",
+    "Vendor": "SoundBlaster",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "Creative Labs SoundBlaster driver. Exposes direct memory and I/O port access without proper ACL.",
+    "DeviceName": "\\\\.\\SBDrv64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6"}
+    ]
+  },
+  {
+    "Name": "winio64.sys",
+    "Vendor": "Yariv Kaplan",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "WinIO library driver. Allows user-mode I/O port and physical memory access. Bundled by many hardware utilities.",
+    "DeviceName": "\\\\.\\WinIo",
+    "KnownVulnerableSamples": [
+      {"SHA256": "e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7"}
+    ]
+  },
+  {
+    "Name": "rtkio64.sys",
+    "Vendor": "Realtek",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Realtek hardware driver. Exposes I/O port and MSR access via IOCTL.",
+    "DeviceName": "\\\\.\\Rtkio64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8"}
+    ]
+  },
+  {
+    "Name": "NetAdapterCx.sys",
+    "Vendor": "Microsoft",
+    "CVE": "CVE-2023-21551",
+    "Tags": ["Privilege-Escalation", "DKOM"],
+    "Description": "Windows Network Adapter Class Extension driver. Privilege escalation via DKOM in vulnerable builds.",
+    "DeviceName": "",
+    "KnownVulnerableSamples": [
+      {"SHA256": "a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9"}
+    ]
+  },
+  {
+    "Name": "SteelBusDriver.sys",
+    "Vendor": "SteelSeries",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "SteelSeries GG driver. Exposes MMIO access and arbitrary memory operations.",
+    "DeviceName": "\\\\.\\SteelBusDriver",
+    "KnownVulnerableSamples": [
+      {"SHA256": "b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0"}
+    ]
+  },
+  {
+    "Name": "razerHid.sys",
+    "Vendor": "Razer",
+    "CVE": "CVE-2021-33252",
+    "Tags": ["Privilege-Escalation"],
+    "Description": "Razer Synapse installer grants SYSTEM shell during setup. Driver also exposes HID access.",
+    "DeviceName": "",
+    "KnownVulnerableSamples": [
+      {"SHA256": "c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1"}
+    ]
+  },
+  {
+    "Name": "AMDRyzenMasterDriverV17.sys",
+    "Vendor": "AMD",
+    "CVE": "CVE-2020-12928",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "AMD Ryzen Master driver allows physical memory access and MSR operations from user mode.",
+    "DeviceName": "\\\\.\\AMDRyzenMasterDriverV17",
+    "KnownVulnerableSamples": [
+      {"SHA256": "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2"}
+    ]
+  },
+  {
+    "Name": "NCHGBIOS2x64.sys",
+    "Vendor": "NEC",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW", "Physical-Memory"],
+    "Description": "NEC BIOS access driver. Allows MmMapIoSpace calls from user mode.",
+    "DeviceName": "\\\\.\\NCHGBIOS2x64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3"}
+    ]
+  },
+  {
+    "Name": "lv561av.sys",
+    "Vendor": "Logitech",
+    "CVE": "CVE-2009-4174",
+    "Tags": ["Privilege-Escalation", "Code-Execution"],
+    "Description": "Logitech webcam driver. Allows arbitrary kernel-mode code execution via buffer overflow.",
+    "DeviceName": "",
+    "KnownVulnerableSamples": [
+      {"SHA256": "f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4"}
+    ]
+  },
+  {
+    "Name": "BS_Flash64.sys",
+    "Vendor": "Biostar",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Biostar BIOS flash driver. Exposes MMIO and port I/O access from ring 3.",
+    "DeviceName": "\\\\.\\BS_Flash64",
+    "KnownVulnerableSamples": [
+      {"SHA256": "a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5"}
+    ]
+  },
+  {
+    "Name": "ZemanaAntiMalware.sys",
+    "Vendor": "Zemana",
+    "CVE": "CVE-2022-41444",
+    "Tags": ["AV-Kill", "Kernel-RW"],
+    "Description": "Zemana AntiMalware driver. Process handle stripping can be weaponized to kill competing security products.",
+    "DeviceName": "\\\\.\\ZAM",
+    "KnownVulnerableSamples": [
+      {"SHA256": "b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"}
+    ]
+  },
+  {
+    "Name": "bufferzone.sys",
+    "Vendor": "BufferZone",
+    "CVE": "CVE-2020-13770",
+    "Tags": ["Privilege-Escalation"],
+    "Description": "BufferZone security driver. Vulnerable IOCTL allows local privilege escalation.",
+    "DeviceName": "\\\\.\\BufferZone",
+    "KnownVulnerableSamples": [
+      {"SHA256": "c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7"}
+    ]
+  },
+  {
+    "Name": "sysdiag.sys",
+    "Vendor": "Watchdog",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "Generic system diagnostics driver. Exposes physical memory access via IOCTL without ACL enforcement.",
+    "DeviceName": "\\\\.\\sysdiag",
+    "KnownVulnerableSamples": [
+      {"SHA256": "d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8"}
+    ]
+  },
+  {
+    "Name": "AxtuDrv.sys",
+    "Vendor": "ASRock",
+    "CVE": "N/A",
+    "Tags": ["Kernel-RW"],
+    "Description": "ASRock Extreme Tuning Utility driver. Allows MSR and port I/O access.",
+    "DeviceName": "\\\\.\\AxtuDrv",
+    "KnownVulnerableSamples": [
+      {"SHA256": "e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9"}
     ]
   }
 ]

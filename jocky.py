@@ -354,9 +354,9 @@ def cmd_byovd(sub_args: list):
     # Lazy-import the BYOVD package
     try:
         sys.path.insert(0, str(APP_DIR))
-        from byovd.scanner import BYOVDScanner
+        from byovd.scanner import DriverScanner
         from byovd.loader  import DriverLoader
-        from byovd.kernel  import KernelOps
+        from byovd.kernel  import KernelOps, KernelInterface
     except ImportError as e:
         print(RED(f"ERROR: BYOVD module not available: {e}"))
         return
@@ -364,32 +364,29 @@ def cmd_byovd(sub_args: list):
     if sub == "scan":
         print(CYAN(BOLD("\n  BYOVD — System Driver Scan")))
         print(DIM("  Checking against LOLDrivers vulnerable-driver database\n"))
-        scanner = BYOVDScanner()
-        print(f"  {DIM('DB entries:')} {scanner.db_size()} known-vulnerable drivers")
+        scanner  = DriverScanner()
+        db_count = scanner.db_entry_count()
+        print(f"  {DIM('DB entries:')} {db_count} known-vulnerable drivers")
         print(f"  {DIM('Scanning...')}\n")
-        results = scanner.scan()
-        total   = results["total_drivers"]
-        vuln    = results["vulnerable_count"]
-        crit    = results["critical_count"]
-        high    = results["high_count"]
+        findings = scanner.scan()
+        vuln     = len(findings)
 
-        print(f"  {DIM('Drivers scanned:')} {total}")
         print(f"  {DIM('Vulnerable found:')} {GREEN(str(vuln)) if vuln == 0 else RED(str(vuln))}")
-        if vuln > 0:
-            print(f"  {DIM('  Critical:')} {RED(str(crit))}")
-            print(f"  {DIM('  High:    ')} {YELLOW(str(high))}")
 
-        for d in results["vulnerable_drivers"]:
-            risk_col = RED if d.risk_level() == "CRITICAL" else YELLOW
-            print(f"\n  {risk_col(f'[{d.risk_level()}]')} {BOLD(d.filename)}")
-            if d.vendor:
-                print(f"    {DIM('Vendor:')} {d.vendor}")
-            if d.cve:
-                print(f"    {DIM('CVE:')}    {YELLOW(d.cve)}")
-            print(f"    {DIM('Path:')}   {d.full_path}")
-            if d.description:
-                desc = d.description[:80] + "..." if len(d.description) > 80 else d.description
-                print(f"    {DIM('Info:')}   {desc}")
+        for f in findings:
+            entry    = f.get('entry', {})
+            risk     = f.get('risk', 'MEDIUM')
+            score    = f.get('score', 0)
+            risk_col = RED if score >= 8 else YELLOW
+            print(f"\n  {risk_col(f'[{risk}]')} {BOLD(f['name'])}")
+            cve = entry.get('CVE', 'N/A')
+            if cve and cve != 'N/A':
+                print(f"    {DIM('CVE:')}    {YELLOW(cve)}")
+            print(f"    {DIM('Path:')}   {f['path']}")
+            print(f"    {DIM('Match:')}  {f['match']}")
+            tags = entry.get('Tags', [])
+            if tags:
+                print(f"    {DIM('Tags:')}  {', '.join(tags[:4])}")
         print()
 
     elif sub == "drivers":
@@ -578,7 +575,7 @@ def main():
         spec = importlib.util.spec_from_file_location("jocky_terminal", str(tui))
         mod  = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        mod.main_menu()
+        mod.main()
         return
 
     cmd = args[0].lower()
