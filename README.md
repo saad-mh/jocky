@@ -234,3 +234,4 @@ Network monitoring sees connections only to the CDN domain. The actual C2 hostna
 | SOCKS5 proxy routing | Full SOCKS5 handshake + auth, double-hop routing |
 | Cross-platform | Windows (full), Linux (/proc, /lib/modules, asyncio C2) |
 | Kernel callback blind | Null process-creation callbacks via RTCore64 kernel write |
+end.
